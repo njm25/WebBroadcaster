@@ -196,7 +196,7 @@ export async function ensureCerts() {
 export function printUrls(port, log = console.log) {
   log('');
   log('  WebBroadcaster is running');
-  log(`    Studio (this computer):  https://localhost:${port}/studio`);
+  log(`    Studio (this computer):  https://localhost:${port}/`);
   for (const a of joinableAddresses()) {
     log(`    Phones / other devices:  https://${a.ip}:${port}/source   (${a.label})`);
   }

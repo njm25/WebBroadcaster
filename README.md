@@ -20,7 +20,7 @@ It runs in one of two ways:
 ## GitHub Pages (hosted)
 
 1. Push this repo to GitHub. Under **Settings → Pages**, set **Source: GitHub Actions**. The included workflow (`.github/workflows/deploy-pages.yml`) builds and deploys on every push to `main`.
-2. Open `https://<you>.github.io/<repo>/studio/` in desktop Chrome.
+2. Open `https://<you>.github.io/<repo>/` in desktop Chrome.
 3. Click **Connect a device** and scan the QR code with a phone that's on the **same Wi-Fi**.
 
 **Privacy model:**
@@ -42,7 +42,7 @@ npm run dev          # HTTPS dev server on :4321 (signaling included)
 
 The terminal prints the URLs:
 
-- **Studio:** `https://localhost:4321/studio` on this computer.
+- **Studio:** `https://localhost:4321/` on this computer.
 - **Phones:** `https://<your-LAN-IP>:4321/source`. In the studio, click **Connect a device** to get a QR code.
 
 ### HTTPS and the local certificate authority
