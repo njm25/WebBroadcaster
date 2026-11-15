@@ -39,6 +39,10 @@ jobs:
           npx astro sync
           npx tsc --noEmit
 
+      # Background-removal runtime + models served from the site itself.
+      - name: Vendor MediaPipe
+        run: npm run vendor
+
       # Project pages live under /<repo>/; user/org pages (<you>.github.io) at the root.
       - name: Build
         run: npx astro build --site "${{ steps.pages.outputs.origin }}" --base "${{ steps.pages.outputs.base_path }}/"

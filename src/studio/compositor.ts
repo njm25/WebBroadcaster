@@ -5,6 +5,7 @@
 // rendering — and therefore recording — keeps going when the tab is hidden.
 
 import { assets } from '../lib/util';
+import { Effects } from './effects';
 import { videoFrameOf, type InputRegistry } from './inputs';
 import { SCENE_H, SCENE_W, type Scene, type SceneItem, type SceneStore, type TextStyle, type TransitionType } from './scenes';
 
@@ -33,6 +34,8 @@ export class Compositor {
   private bufB = document.createElement('canvas');
   private transition: ActiveTransition | null = null;
   private images = new Map<string, HTMLImageElement | 'loading' | 'error'>();
+  /** GPU keying (color key / background removal) for video sources. */
+  readonly effects = new Effects();
   private textCache = new Map<string, { key: string; canvas: HTMLCanvasElement }>();
   private worker: Worker | null = null;
   private frameListeners = new Set<() => void>();
@@ -254,7 +257,9 @@ export class Compositor {
           ctx.translate(dx * 2 + dw, 0);
           ctx.scale(-1, 1);
         }
-        ctx.drawImage(d.img, sx, sy, sw, sh, dx, dy, dw, dh);
+        // Keyed sources draw through the effects pass (same pixel size, transparent where keyed).
+        const img = d.img instanceof HTMLVideoElement ? (this.effects.apply(item, d.img) ?? d.img) : d.img;
+        ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
       }
     }
     ctx.restore();

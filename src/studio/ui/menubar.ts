@@ -31,6 +31,14 @@ export interface Menu {
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 
+/** Every alternative of a binding, for lists: "Ctrl+Y or Ctrl+Shift+Z". */
+export function formatKeys(keys: string) {
+  return keys
+    .split('|')
+    .map((k) => keyText(k))
+    .join(' or ');
+}
+
 function keyText(keys: string) {
   const first = keys.split('|')[0].replace('ArrowUp', '↑').replace('ArrowDown', '↓').replace(/^Delete$/, 'Del');
   return isMac ? first.replace(/Ctrl\+/g, '⌘').replace(/Shift\+/g, '⇧').replace(/Alt\+/g, '⌥') : first;

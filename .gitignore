@@ -35,3 +35,6 @@ desktop.ini
 
 # Personal Claude Code settings (shared launch.json stays tracked)
 .claude/settings.local.json
+
+# Vendored at build time by scripts/vendor-mediapipe.mjs
+public/vendor/

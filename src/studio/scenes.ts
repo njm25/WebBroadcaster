@@ -50,7 +50,42 @@ export interface SceneItem {
   locked: boolean;
   /** Re-fit the box when the source flips between portrait and landscape. */
   autoFit: boolean;
+  /** Keying for video sources (color key or AI background removal). */
+  key?: KeySettings;
 }
+
+export type KeyMode = 'none' | 'color' | 'remove';
+
+/** All values are UI units (mostly 0–100) so they're easy to show and store. */
+export interface KeySettings {
+  mode: KeyMode;
+  // Color key
+  color: string; // hex, e.g. #00ff00
+  similarity: number; // 0–100: how far from the key color still counts as "key"
+  smoothness: number; // 0–100: softness of the transition at the edge
+  spill: number; // 0–100: how much key-colored tint to remove from what's kept
+  // Background removal
+  quality: 'fast' | 'accurate';
+  threshold: number; // 0–100: how confident the model must be that a pixel is a person
+  softness: number; // 0–100: edge feather
+  shift: number; // -50–50: shrink (−) or grow (+) the cut-out
+  smoothing: number; // 0–95: steadies the mask between frames (less flicker, slower to follow motion)
+}
+
+export const DEFAULT_KEY: KeySettings = {
+  mode: 'none',
+  color: '#00ff00',
+  similarity: 40,
+  smoothness: 8,
+  spill: 10,
+  quality: 'fast',
+  threshold: 50,
+  softness: 20,
+  shift: 0,
+  smoothing: 60,
+};
+
+export const keyOf = (item: SceneItem): KeySettings => ({ ...DEFAULT_KEY, ...item.key });
 
 export interface Scene {
   id: string;

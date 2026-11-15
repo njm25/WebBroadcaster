@@ -9,9 +9,13 @@
     "start": "node server/server.mjs",
     "serve": "npm run build && npm start",
     "trust": "node scripts/trust-ca.mjs",
-    "untrust": "node scripts/trust-ca.mjs --remove"
+    "untrust": "node scripts/trust-ca.mjs --remove",
+    "vendor": "node scripts/vendor-mediapipe.mjs",
+    "predev": "node scripts/vendor-mediapipe.mjs",
+    "prebuild": "node scripts/vendor-mediapipe.mjs"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "1.1.1",
     "astro": "^7.4.12",
     "dockview-core": "^8.9.0",
     "qrcode": "^1.5.4",

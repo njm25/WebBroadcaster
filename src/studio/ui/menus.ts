@@ -21,7 +21,7 @@ import {
 import { exportCollection, importCollection } from './collection';
 import { openModal, type MenuEntry } from './common';
 import { showConnect } from './devices-ui';
-import type { Menu, MenuItem } from './menubar';
+import { formatKeys, type Menu, type MenuItem } from './menubar';
 import { addSourceMenu } from './scenes-dock';
 
 /** Convert the older popup-menu entries (used by the + buttons) into menu items. */
@@ -192,7 +192,7 @@ export function buildMenus(studio: Studio, layout: DockingController, controls: 
   const { store, recorder } = studio;
   const noSel = () => !store.selectedItem;
 
-  return [
+  const menus: Menu[] = [
     {
       label: 'File',
       key: 'F',
@@ -342,40 +342,75 @@ export function buildMenus(studio: Studio, layout: DockingController, controls: 
       label: 'Help',
       key: 'H',
       items: () => [
-        { label: 'Keyboard Shortcuts', keys: 'Ctrl+/', onClick: showShortcuts },
+        { label: 'Keyboard Shortcuts', keys: 'Ctrl+/', onClick: () => showShortcuts(studio, menus) },
         { label: 'Connecting Devices', onClick: () => void showConnect(studio) },
         { sep: true },
         { label: 'About WebBroadcaster', onClick: () => showAbout(studio) },
       ],
     },
   ];
+  return menus;
 }
 
-function showShortcuts() {
-  const rows: [string, string][] = [
-    ['1 – 9', 'Switch to scene (or preview it in Studio Mode)'],
-    ['Enter', 'Transition preview to program (Studio Mode)'],
-    ['F9 / Shift+F9', 'Start/stop · pause/resume recording'],
-    ['Ctrl+Z / Ctrl+Y', 'Undo / redo'],
-    ['Ctrl+X / C / V / D', 'Cut / copy / paste / duplicate source'],
-    ['Del', 'Remove selected source'],
-    ['Arrow keys (Shift = 10px)', 'Nudge selected source'],
-    ['Ctrl+↑ / Ctrl+↓', 'Bring forward / send backward'],
-    ['Ctrl+L / Ctrl+H', 'Lock / hide selected source'],
-    ['Ctrl+M', 'Toggle Studio Mode'],
-    ['Ctrl+Shift+P', 'Program output full screen'],
-    ['Drag handles', 'Resize · Shift = free aspect · Alt = crop · Ctrl = no snapping'],
-    ['Panel dividers', 'Drag to resize · double-click to collapse · Alt = no snapping'],
-    ['Alt', 'Open the menu bar (then arrows / Enter / Esc)'],
-  ];
-  openModal(
-    'Keyboard Shortcuts',
-    h(
-      'table.shortcut-table',
-      null,
-      ...rows.map(([k, d]) => h('tr', null, h('td', null, h('kbd', null, k)), h('td', null, d))),
-    ),
-  );
+/** Shortcuts that don't belong to a menu item, listed after the menu ones. */
+const OTHER_SHORTCUTS: [group: string, keys: string, what: string][] = [
+  ['Scenes', '1 – 9', 'Switch to scene 1–9 (in Studio Mode: show it in Preview)'],
+  ['Scenes', 'Enter', 'Transition Preview to Program (Studio Mode)'],
+  ['Scenes', 'Double-click name', 'Rename scene'],
+  ['Scenes', 'Drag', 'Reorder scenes (Esc cancels)'],
+  ['Sources', 'Arrow keys', 'Nudge selected source 1 px'],
+  ['Sources', 'Shift + Arrow keys', 'Nudge selected source 10 px'],
+  ['Sources', 'Esc', 'Deselect source'],
+  ['Sources', 'Double-click name', 'Rename source'],
+  ['Sources', 'Drag', 'Reorder sources (Esc cancels)'],
+  ['Canvas', 'Drag', 'Move source (snaps to edges and center)'],
+  ['Canvas', 'Drag a handle', 'Resize (corners keep the aspect ratio)'],
+  ['Canvas', 'Shift + drag a handle', 'Resize freely'],
+  ['Canvas', 'Alt + drag a handle', 'Crop'],
+  ['Canvas', 'Ctrl + drag', 'Move or resize without snapping'],
+  ['Canvas', 'Double-click text', 'Edit text in place'],
+  ['Canvas', 'Ctrl+Enter or click outside', 'Finish editing text'],
+  ['Canvas', 'Esc (while editing text)', 'Cancel text edit'],
+  ['Everywhere', 'Right-click', 'Menu for whatever is under the pointer'],
+  ['Everywhere', 'Alt', 'Open the menu bar (then arrow keys, Enter, Esc)'],
+  ['Everywhere', 'Alt + underlined letter', 'Open that menu (e.g. Alt+F for File)'],
+  ['Everywhere', 'Esc', 'Close menus and dialogs'],
+];
+
+/**
+ * Help → Keyboard Shortcuts. Built from the live menus (every item with a
+ * shortcut, including submenus), so new shortcuts show up automatically,
+ * followed by the ones that aren't on a menu.
+ */
+function showShortcuts(studio: Studio, menus: Menu[]) {
+  const groups = new Map<string, [string, string][]>();
+  const add = (group: string, keys: string, what: string) => {
+    const rows = groups.get(group) ?? [];
+    if (!rows.some(([k, w]) => k === keys && w === what)) rows.push([keys, what]);
+    groups.set(group, rows);
+  };
+  const walk = (group: string, items: MenuItem[], path: string) => {
+    for (const it of items) {
+      if ('sep' in it) continue;
+      const label = path ? `${path} › ${it.label}` : it.label;
+      if (it.submenu) walk(group, it.submenu(), label);
+      // Per-scene "1–9" hints are listed once under Scenes instead.
+      else if (it.keys) add(group, formatKeys(it.keys), label);
+      else if (it.hint && !/^[1-9]$/.test(it.hint) && it.hint !== 'Enter') add(group, it.hint, label);
+    }
+  };
+  for (const m of menus) walk(m.label, m.items(), '');
+  // Source shortcuts appear in Edit only while a source is focused; always list them.
+  walk('Edit', itemMenu(studio, null), '');
+  for (const [group, keys, what] of OTHER_SHORTCUTS) add(group, keys, what);
+
+  const table = h('table.shortcut-table');
+  for (const [group, rows] of groups) {
+    if (!rows.length) continue;
+    table.append(h('tr.shortcut-group', null, h('th', { colspan: '2' }, group)));
+    for (const [k, what] of rows) table.append(h('tr', null, h('td', null, h('kbd', null, k)), h('td', null, what)));
+  }
+  openModal('Keyboard Shortcuts', table);
 }
 
 function showAbout(studio: Studio) {

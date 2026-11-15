@@ -1,7 +1,7 @@
 import { icon } from '../../lib/icons';
 import { assets, clamp, h, uid } from '../../lib/util';
 import type { Studio } from '../context';
-import { SCENE_H, SCENE_W, fitBox, type Fit, type SceneItem, type TextStyle } from '../scenes';
+import { DEFAULT_KEY, SCENE_H, SCENE_W, fitBox, keyOf, type Fit, type KeyMode, type KeySettings, type SceneItem, type TextStyle } from '../scenes';
 import {
   fontStack,
   loadSystemFonts,
@@ -90,6 +90,104 @@ export function mountProps(studio: Studio, root: HTMLElement) {
       },
     );
 
+  // ---------------------------------------------------------------- keying
+  /** Update the selected item's key settings. */
+  const setKey = (patch: Partial<KeySettings>) => {
+    const cur = store.selectedItem;
+    if (cur) store.updateItem(cur.id, { key: { ...keyOf(cur), ...patch } });
+  };
+
+  /** Slider row bound to a key setting, with its value shown at the right. */
+  const keySlider = (
+    label: string,
+    field: keyof KeySettings,
+    min: number,
+    max: number,
+    tip: string,
+    fmt: (v: number) => string = (v) => String(v),
+  ) => {
+    const input = bind(
+      h('input', { type: 'range', min: String(min), max: String(max), step: '1' }) as HTMLInputElement,
+      (i) => keyOf(i)[field] as number,
+      (v) => setKey({ [field]: Number(v) } as Partial<KeySettings>),
+    );
+    const out = h('span.slider-val');
+    fields.push({ el: out, read: (i) => keyOf(i)[field] as number, apply: (v) => (out.textContent = fmt(Number(v))) });
+    return h('div.prop-row', { title: tip }, h('span', null, label), h('div.slider-row', null, input, out));
+  };
+
+  /** "Keying" section for video sources: color key or AI background removal. */
+  function keyingGroup(it: SceneItem): HTMLElement {
+    const k = keyOf(it);
+    const modeCtl = segmented<KeyMode>(
+      [
+        { value: 'none', label: 'No keying', text: 'None' },
+        { value: 'color', label: 'Remove a color (green/blue screen)', text: 'Color key' },
+        { value: 'remove', label: 'Remove the background with AI (no green screen needed)', text: 'Remove BG' },
+      ],
+      k.mode,
+      (v) => {
+        setKey({ mode: v });
+        build(); // show that mode's settings
+      },
+      'Keying mode',
+    );
+    fields.push({ el: modeCtl.el, read: (i) => keyOf(i).mode, apply: (v) => modeCtl.set(v as KeyMode) });
+
+    const rows: HTMLElement[] = [h('div.prop-row', null, h('span', null, 'Mode'), modeCtl.el)];
+    const pct = (v: number) => `${v}%`;
+
+    if (!comp.effects.supported) {
+      rows.push(h('p.key-note', null, 'Keying needs WebGL2, which this browser does not have.'));
+    } else if (k.mode === 'color') {
+      const color = bind(h('input', { type: 'color' }) as HTMLInputElement, (i) => keyOf(i).color, (v) => setKey({ color: v }));
+      const preset = (label: string, hex: string) =>
+        h('button.btn.sm', { type: 'button', onclick: () => setKey({ color: hex }), title: `Key out ${label.toLowerCase()}` }, label);
+      rows.push(
+        h(
+          'div.prop-row',
+          { title: 'The color to make transparent' },
+          h('span', null, 'Key color'),
+          h('div.key-color', null, color, preset('Green', '#00ff00'), preset('Blue', '#0000ff')),
+        ),
+        keySlider('Similarity', 'similarity', 1, 100, 'How close a color must be to the key color to be removed. Raise it until the screen disappears.', pct),
+        keySlider('Smoothness', 'smoothness', 1, 100, 'Softens the edge between removed and kept areas.', pct),
+        keySlider('Spill', 'spill', 1, 100, 'Removes the key-colored tint that reflects onto people and objects.', pct),
+      );
+    } else if (k.mode === 'remove') {
+      const qualityCtl = segmented<KeySettings['quality']>(
+        [
+          { value: 'fast', label: 'Fast: lighter on the computer', text: 'Fast' },
+          { value: 'accurate', label: 'Accurate: better hair and edges, uses more power', text: 'Accurate' },
+        ],
+        k.quality,
+        (v) => setKey({ quality: v }),
+        'Background removal quality',
+      );
+      fields.push({ el: qualityCtl.el, read: (i) => keyOf(i).quality, apply: (v) => qualityCtl.set(v as KeySettings['quality']) });
+      rows.push(
+        h('div.prop-row', null, h('span', null, 'Quality'), qualityCtl.el),
+        keySlider('Threshold', 'threshold', 1, 99, 'How sure the model must be that a pixel belongs to a person. Raise it to remove more background.', pct),
+        keySlider('Softness', 'softness', 0, 100, 'Feathers the edge of the cut-out.', pct),
+        keySlider('Edge shift', 'shift', -50, 50, 'Shrinks (−) or grows (+) the cut-out around the person.', (v) => (v > 0 ? `+${v}` : String(v))),
+        keySlider('Smoothing', 'smoothing', 0, 95, 'Steadies the cut-out between frames. Higher = less flicker but slower to follow fast motion.', pct),
+      );
+      const status = comp.effects.status(k.quality);
+      if (status) rows.push(h('p.key-note', null, status));
+    }
+
+    if (k.mode !== 'none') {
+      rows.push(
+        h(
+          'div.prop-actions',
+          null,
+          h('button.btn.sm', { type: 'button', onclick: () => setKey({ ...DEFAULT_KEY, mode: k.mode }) }, 'Reset keying'),
+        ),
+      );
+    }
+    return h('div.prop-group', null, h('div.title', null, 'Keying'), ...rows);
+  }
+
   /** Compact labelled number input for the two-column grids (X/Y/W/H, crop). */
   const num = (label: string, read: (it: SceneItem) => number, write: (v: number) => void, step = 1) =>
     h('label', null, label, numField(read, write, step));
@@ -150,6 +248,7 @@ export function mountProps(studio: Studio, root: HTMLElement) {
             ),
           ),
         ),
+        keyingGroup(it),
       );
     } else if (src.type === 'text') {
       const ta = bind(h('textarea', { rows: 3 }) as HTMLTextAreaElement, (i) => (i.source as TextStyle).text, (v) => updateSource({ text: v }));
@@ -373,6 +472,10 @@ export function mountProps(studio: Studio, root: HTMLElement) {
   store.on('select', build);
   store.on('change', refresh);
   registry.on('change', () => {
+    if (!root.contains(document.activeElement)) build();
+  });
+  // Background-removal model finished loading (or failed): update the note.
+  comp.effects.onStatus(() => {
     if (!root.contains(document.activeElement)) build();
   });
   build();

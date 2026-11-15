@@ -1223,3 +1223,55 @@ body.sorting * {
   align-items: center;
   height: 28px;
 }
+.shortcut-group th {
+  padding: 14px 6px 4px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+.shortcut-table tr:first-child th {
+  padding-top: 0;
+}
+
+/* ---------- keying (video source properties) ---------- */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.slider-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+}
+.slider-val {
+  flex: none;
+  width: 38px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.key-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.key-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--warn);
+}
+.prop-row .segmented {
+  justify-self: start;
+}
+.seg-btn:not(:has(svg)) {
+  width: auto;
+  padding: 0 9px;
+  font-size: 12px;
+}
