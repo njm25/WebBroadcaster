@@ -147,3 +147,53 @@ export function toast(msg: string, ms = 3500) {
 }
 
 export const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+export interface SegmentOption<T extends string> {
+  value: T;
+  label: string; // tooltip + accessible name
+  icon?: string;
+  text?: string; // visible text when there's no icon
+}
+
+/**
+ * Segmented control: a row of icon (or text) buttons where exactly one is
+ * active, e.g. text alignment. Arrow keys move between options.
+ * Returns the element and a `set` to update it without firing onChange.
+ */
+export function segmented<T extends string>(options: SegmentOption<T>[], value: T, onChange: (v: T) => void, label = 'Options') {
+  const el = h('div.segmented', { role: 'radiogroup', 'aria-label': label });
+  const buttons = options.map((o) => {
+    const b = h(
+      'button.seg-btn',
+      { type: 'button', role: 'radio', title: o.label, 'aria-label': o.label },
+      o.icon ? icon(o.icon) : (o.text ?? o.label),
+    ) as HTMLButtonElement;
+    b.addEventListener('click', () => {
+      set(o.value);
+      onChange(o.value);
+    });
+    el.append(b);
+    return b;
+  });
+  const set = (v: T) => {
+    options.forEach((o, i) => {
+      const on = o.value === v;
+      buttons[i].classList.toggle('active', on);
+      buttons[i].setAttribute('aria-checked', String(on));
+      buttons[i].tabIndex = on ? 0 : -1;
+    });
+  };
+  el.addEventListener('keydown', (e) => {
+    const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    if (i < 0) return;
+    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const j = (i + d + buttons.length) % buttons.length;
+    buttons[j].focus();
+    buttons[j].click();
+  });
+  set(value);
+  return { el, set };
+}

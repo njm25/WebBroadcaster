@@ -66,13 +66,13 @@ export function mountMixer(studio: Studio, root: HTMLElement) {
             inp.addEventListener('keydown', (e) => e.stopPropagation());
             return inp;
           })(),
-          'ms — delays this audio to line up with video',
+          'ms',
         )
       : null;
 
     return h(
       'div.strip',
-      { class: `strip${online ? '' : ' offline'}${isMaster ? ' master' : ''}` },
+      { class: `strip${online ? '' : ' offline'}${isMaster ? ' master' : ''}`, 'data-input-id': id },
       h('div.strip-name', null, name, sub ? h('small', null, sub) : null),
       db,
       h('div.strip-meter', null, fill, hold),
@@ -96,7 +96,7 @@ export function mountMixer(studio: Studio, root: HTMLElement) {
       ...strips.map((s) => strip(s.id, s.label, s.deviceName + (s.online ? '' : ' · offline'), s.online)),
       strips.length
         ? ''
-        : h('div.list-empty', null, 'No audio sources. Connect a phone with its microphone on, or add a mic in Devices.'),
+        : h('div.list-empty', null, 'No audio sources'),
     );
   }
 

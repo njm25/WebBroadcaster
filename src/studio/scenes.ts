@@ -86,6 +86,15 @@ export class SceneStore extends Emitter<{
   selectedItemId: string | null = null;
   private saveTimer: number | undefined;
 
+  // Undo/redo: snapshots of the scenes, taken after edits settle (a whole drag = one step).
+  private undoStack: string[] = [];
+  private redoStack: string[] = [];
+  private lastSnap = '';
+  private snapTimer: number | undefined;
+  private restoring = false;
+  /** Internal clipboard for Copy/Paste of scene items. */
+  private clipboard: SceneItem | null = null;
+
   constructor() {
     super();
     const p = loadJSON<Partial<Persisted>>(STORAGE_KEY, {});
@@ -96,6 +105,93 @@ export class SceneStore extends Emitter<{
     this.studioMode = !!p.studioMode;
     this.transition = p.transition ?? 'fade';
     this.duration = p.duration ?? 500;
+    this.lastSnap = JSON.stringify(this.scenes);
+  }
+
+  // ----- history -----
+  get canUndo() {
+    this.flushSnapshot();
+    return this.undoStack.length > 0;
+  }
+  get canRedo() {
+    this.flushSnapshot();
+    return this.redoStack.length > 0;
+  }
+
+  private flushSnapshot() {
+    if (this.snapTimer === undefined) return;
+    clearTimeout(this.snapTimer);
+    this.snapTimer = undefined;
+    const snap = JSON.stringify(this.scenes);
+    if (snap === this.lastSnap) return;
+    this.undoStack.push(this.lastSnap);
+    if (this.undoStack.length > 200) this.undoStack.shift();
+    this.redoStack = [];
+    this.lastSnap = snap;
+  }
+
+  undo() {
+    this.flushSnapshot();
+    const prev = this.undoStack.pop();
+    if (prev === undefined) return;
+    this.redoStack.push(this.lastSnap);
+    this.restore(prev);
+  }
+
+  redo() {
+    this.flushSnapshot();
+    const next = this.redoStack.pop();
+    if (next === undefined) return;
+    this.undoStack.push(this.lastSnap);
+    this.restore(next);
+  }
+
+  private restore(snap: string) {
+    this.lastSnap = snap;
+    this.scenes = JSON.parse(snap);
+    // Undo never switches what's live: keep program/preview if those scenes still exist.
+    if (!this.find(this.programId)) this.programId = this.scenes[0].id;
+    if (!this.find(this.previewId)) this.previewId = this.programId;
+    if (this.selectedItemId && !this.selectedItem) this.selectedItemId = null;
+    this.restoring = true;
+    this.changed();
+    this.restoring = false;
+    this.emit('select');
+  }
+
+  // ----- clipboard -----
+  get hasClipboard() {
+    return !!this.clipboard;
+  }
+
+  copySelected() {
+    const it = this.selectedItem;
+    if (it) this.clipboard = structuredClone(it);
+    return !!it;
+  }
+
+  cutSelected() {
+    const it = this.selectedItem;
+    if (!it || it.locked) return;
+    this.copySelected();
+    this.removeItem(it.id);
+  }
+
+  paste() {
+    if (!this.clipboard) return;
+    const { id: _id, ...rest } = structuredClone(this.clipboard);
+    // Offset copies so they don't land exactly on top of the original.
+    const taken = (x: number, y: number) => this.editing.items.some((i) => i.x === x && i.y === y);
+    let { x, y } = rest;
+    while (taken(x, y)) {
+      x += 30;
+      y += 30;
+    }
+    this.addItem({ ...rest, x, y, locked: false });
+  }
+
+  duplicateSelected() {
+    if (this.copySelected()) this.paste();
   }
 
   find(id: string | undefined | null) {
@@ -116,6 +212,10 @@ export class SceneStore extends Emitter<{
   }
 
   changed() {
+    if (!this.restoring) {
+      clearTimeout(this.snapTimer);
+      this.snapTimer = window.setTimeout(() => this.flushSnapshot(), 400);
+    }
     this.emit('change');
     clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => {
@@ -173,6 +273,17 @@ export class SceneStore extends Emitter<{
     const j = i + delta;
     if (i < 0 || j < 0 || j >= this.scenes.length) return;
     [this.scenes[i], this.scenes[j]] = [this.scenes[j], this.scenes[i]];
+    this.changed();
+  }
+
+  /** Move a scene to a position in the list (drag to reorder). */
+  moveSceneTo(id: string, index: number) {
+    const i = this.scenes.findIndex((s) => s.id === id);
+    if (i < 0) return;
+    const j = Math.max(0, Math.min(this.scenes.length - 1, index));
+    if (i === j) return;
+    const [s] = this.scenes.splice(i, 1);
+    this.scenes.splice(j, 0, s);
     this.changed();
   }
 
@@ -249,6 +360,17 @@ export class SceneStore extends Emitter<{
     this.changed();
   }
 
+  /** Move an item to a stack position (0 = bottom/back). */
+  moveItemTo(id: string, index: number, scene = this.editing) {
+    const i = scene.items.findIndex((x) => x.id === id);
+    if (i < 0) return;
+    const j = Math.max(0, Math.min(scene.items.length - 1, index));
+    if (i === j) return;
+    const [it] = scene.items.splice(i, 1);
+    scene.items.splice(j, 0, it);
+    this.changed();
+  }
+
   select(id: string | null) {
     if (this.selectedItemId === id) return;
     this.selectedItemId = id;
@@ -268,7 +390,7 @@ export class SceneStore extends Emitter<{
     for (const scene of this.scenes) {
       for (const it of scene.items) {
         if (it.source.type !== 'input' || it.source.inputId !== inputId) continue;
-        if (!it.autoFit || it.locked || it.fit === 'stretch') continue;
+        if (it.locked || it.fit === 'stretch') continue; // locked or stretched sources keep their box
         if (it.h > it.w === portrait) continue; // box already matches the orientation
         const fullScreen = it.w >= SCENE_W - 2 || it.h >= SCENE_H - 2;
         if (fullScreen) {

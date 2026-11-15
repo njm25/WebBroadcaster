@@ -1,11 +1,13 @@
 import QRCode from 'qrcode';
 import { icon } from '../../lib/icons';
-import { joinUrl, resetStudioRoom, type Room } from '../../lib/room';
+import { joinUrl, type Room } from '../../lib/room';
+import { disconnectDevice, newRoomCode } from './actions';
+import { onPermissionChange, permissionState, requestMedia, type PermState } from '../permissions';
 import { h } from '../../lib/util';
 import type { Studio } from '../context';
 import type { Input } from '../inputs';
 import { remoteInputId, type RemoteDevice } from '../remote';
-import { errMsg, iconBtn, openMenu, openModal, toast } from './common';
+import { errMsg, iconBtn, openMenu, openModal, toast, type MenuEntry } from './common';
 import { pickDevice } from './scenes-dock';
 
 const STATE_DOT: Record<string, string> = {
@@ -26,20 +28,19 @@ export function mountDevices(studio: Studio, root: HTMLElement) {
   const thumbs = new Map<string, HTMLVideoElement>();
   const statEls = new Map<string, HTMLElement>();
   let signature = '';
+  /** Selected entry: 'peer:<id>' (remote device), 'input:<id>' (local source) or 'offline:<deviceId>'. */
+  let selected: string | null = null;
+  const select = (key: string | null) => {
+    selected = key;
+    signature = '';
+    render();
+  };
+  const selClass = (key: string) => (key === selected ? ' selected' : '');
 
   const thumb = (input: Input) => {
     let v = thumbs.get(input.id);
     if (!v) {
-      v = h('video', { autoplay: true, muted: true, playsInline: true }) as HTMLVideoElement;
-      Object.assign(v.style, {
-        width: '96px',
-        height: '54px',
-        objectFit: 'contain',
-        background: '#000',
-        borderRadius: '4px',
-        flex: 'none',
-        cursor: 'pointer',
-      });
+      v = h('video', { autoplay: true, muted: true, playsInline: true, class: 'src-thumb' }) as HTMLVideoElement;
       v.title = 'Add to scene';
       v.addEventListener('click', () => studio.addInputItem(input.id));
       thumbs.set(input.id, v);
@@ -49,19 +50,34 @@ export function mountDevices(studio: Studio, root: HTMLElement) {
     return v;
   };
 
+  /** Thumbnail for live video, otherwise an icon tile the same height as the text. */
+  const media = (input: Input | undefined, iconName: string) =>
+    input?.kind === 'video' && input.stream && input.online ? thumb(input) : h('span.src-icon', null, icon(iconName));
+
+  /** Name on the first line, details (stats / state) on a second, smaller line. */
+  const srcText = (label: string, detail: HTMLElement | string, muted = false) =>
+    h('div.src-text', null, h('div', { class: `lbl${muted ? ' muted' : ''}`, title: label }, label), typeof detail === 'string' ? h('div.stat', null, detail) : detail);
+
   function sourceRow(input: Input | undefined, label: string, kind: 'video' | 'audio', enabled: boolean, statKey: string) {
-    const stat = h('span.stat');
-    statEls.set(statKey, stat);
+    const stat = h('div.stat', null, enabled ? '' : 'Off');
+    if (enabled) statEls.set(statKey, stat);
     return h(
       'div.device-src',
       null,
-      kind === 'video' && input?.stream && input.online ? thumb(input) : icon(kind === 'video' ? (enabled ? 'camera' : 'cameraOff') : enabled ? 'mic' : 'micOff'),
-      h('span.lbl', null, label),
-      enabled ? null : h('span', null, '(off)'),
-      stat,
+      media(input, kind === 'video' ? (enabled ? 'camera' : 'cameraOff') : enabled ? 'mic' : 'micOff'),
+      srcText(label, stat, !enabled),
       kind === 'video' && input ? iconBtn('plus', 'Add to current scene', () => studio.addInputItem(input.id)) : null,
     );
   }
+
+  const STATE_TEXT: Record<string, string> = {
+    connected: 'Connected',
+    connecting: 'Connecting…',
+    new: 'Connecting…',
+    disconnected: 'Reconnecting…',
+    failed: 'Connection failed',
+    closed: 'Disconnected',
+  };
 
   function deviceCard(dev: RemoteDevice) {
     const { peer, link } = dev;
@@ -80,18 +96,30 @@ export function mountDevices(studio: Studio, root: HTMLElement) {
         {
           label: 'Disconnect device',
           icon: 'logout',
-          onClick: () => confirm(`Disconnect "${peer.name}"?`) && ctl({ action: 'disconnect' }),
+          onClick: () => void disconnectDevice(studio, peer.id),
         },
       ]),
     );
+    const key = `peer:${peer.id}`;
     return h(
       'div.device',
-      null,
+      { class: `device${selClass(key)}`, onclick: () => select(key), 'data-peer-id': peer.id },
       h(
         'div.device-head',
         null,
-        h('span', { class: `dot ${STATE_DOT[link.state] ?? ''}`, title: `WebRTC: ${link.state}` }),
-        h('span.name', null, peer.name, h('span.platform', null, peer.info.platform ?? '')),
+        h('span', { class: `dot ${STATE_DOT[link.state] ?? ''}` }),
+        h(
+          'div.dev-title',
+          null,
+          h('div.name', { title: peer.name }, peer.name),
+          h(
+            'div.dev-sub',
+            null,
+            [STATE_TEXT[link.state] ?? link.state, peer.info.platform && peer.info.platform !== peer.name ? peer.info.platform : '']
+              .filter(Boolean)
+              .join(' · '),
+          ),
+        ),
         h(
           'div.device-actions',
           null,
@@ -109,9 +137,7 @@ export function mountDevices(studio: Studio, root: HTMLElement) {
         const id = remoteInputId(peer.deviceId, s.key);
         return sourceRow(registry.get(id), s.label, s.kind, s.enabled, `${peer.id}:${s.key}`);
       }),
-      link.state !== 'connected'
-        ? h('div.device-src', null, link.state === 'failed' ? 'Connection failed — reconnect the device' : 'Negotiating media…')
-        : null,
+      link.state === 'failed' ? h('div.dev-note', null, 'Reconnect the device to try again.') : null,
     );
   }
 
@@ -123,16 +149,25 @@ export function mountDevices(studio: Studio, root: HTMLElement) {
         'div.device-head',
         null,
         h('span', { class: 'dot ok' }),
-        h('span.name', null, 'This computer'),
+        h('div.dev-title', null, h('div.name', null, 'This computer'), h('div.dev-sub', null, `${inputs.length} source${inputs.length === 1 ? '' : 's'}`)),
       ),
       ...inputs.map((i) =>
         h(
           'div.device-src',
-          null,
-          i.kind === 'video' && i.online && i.stream ? thumb(i) : icon(i.kind === 'video' ? (i.type === 'screen' ? 'screen' : 'camera') : 'mic'),
-          h('span.lbl', null, i.label),
-          i.online ? null : h('span', null, '(offline)'),
-          h('span.stat'),
+          {
+            class: `device-src selectable${selClass(`input:${i.id}`)}`,
+            onclick: (e: Event) => {
+              e.stopPropagation();
+              select(`input:${i.id}`);
+            },
+            'data-input-id': i.id,
+          },
+          media(i, i.kind === 'video' ? (i.type === 'screen' ? 'screen' : 'camera') : 'mic'),
+          srcText(
+            i.label,
+            i.online ? (i.kind === 'video' ? (i.type === 'screen' ? 'Screen capture' : 'Webcam') : 'Microphone') : 'Offline',
+            !i.online,
+          ),
           i.online
             ? null
             : iconBtn('refresh', 'Reconnect', () =>
@@ -161,11 +196,16 @@ export function mountDevices(studio: Studio, root: HTMLElement) {
       ]),
       locals.map((i) => [i.id, i.label, i.online, !!i.stream]),
       offline.map((i) => i.id),
+      perm,
+      selected,
     ]);
     if (sig !== signature) {
       signature = sig;
       statEls.clear();
-      const children: (Node | string)[] = devices.map(deviceCard);
+      const children: (Node | string)[] = [];
+      const card = permissionCard();
+      if (card) children.push(card);
+      children.push(...devices.map(deviceCard));
       if (locals.length) children.push(localCard(locals));
       if (offline.length) {
         const byDevice = new Map<string, Input[]>();
@@ -174,17 +214,25 @@ export function mountDevices(studio: Studio, root: HTMLElement) {
           children.push(
             h(
               'div.device',
-              { style: { opacity: '0.6' } },
+              {
+                class: `device offline${selClass(`offline:${inputs[0].deviceId}`)}`,
+                onclick: () => select(`offline:${inputs[0].deviceId}`),
+                'data-device-id': inputs[0].deviceId,
+              },
               h(
                 'div.device-head',
                 null,
                 h('span.dot'),
-                h('span.name', null, inputs[0].deviceName, h('span.platform', null, 'offline')),
+                h(
+                  'div.dev-title',
+                  null,
+                  h('div.name', null, inputs[0].deviceName),
+                  h('div.dev-sub', null, `Offline · ${inputs.map((i) => i.label).join(', ')}`),
+                ),
                 iconBtn('trash', 'Forget device', () => {
                   for (const i of inputs) registry.remove(i.id);
                 }),
               ),
-              h('div.device-src', null, inputs.map((i) => i.label).join(', ')),
             ),
           );
         }
@@ -194,15 +242,14 @@ export function mountDevices(studio: Studio, root: HTMLElement) {
           h(
             'div.list-empty',
             null,
-            'No devices connected. Click ',
-            h('strong', null, 'Connect a device'),
-            ' and scan the QR code with your phone.',
+            'No devices connected.',
           ),
         );
       }
       box.replaceChildren(...children);
       for (const [id, v] of thumbs) if (!v.isConnected) thumbs.delete(id);
     }
+    renderToolbar();
     // Update stats in place.
     for (const d of devices) {
       for (const s of d.peer.state.sources ?? []) {
@@ -218,10 +265,82 @@ export function mountDevices(studio: Studio, root: HTMLElement) {
     }
   }
 
-  toolbar.append(
-    h('button.btn.sm.primary', { onclick: () => showConnect(studio) }, icon('qr'), 'Connect a device'),
-    h('button.btn.sm', { onclick: () => pickDevice(studio, 'audioinput'), title: 'Add a microphone on this computer' }, icon('mic'), 'Local mic'),
-  );
+  // Toolbar: + (connect / add) and trash (remove selected), like Scenes and Sources.
+  const addBtn = h('button.btn.ghost', { title: 'Add a device', 'aria-label': 'Add a device' }, icon('plus')) as HTMLButtonElement;
+  addBtn.addEventListener('click', () => openMenu(addBtn, addDeviceMenu(studio)));
+  const trashBtn = h('button.btn.ghost', { 'aria-label': 'Remove selected device' }, icon('trash')) as HTMLButtonElement;
+  trashBtn.addEventListener('click', () => {
+    if (selected) removeDeviceEntry(studio, selected);
+  });
+  toolbar.append(addBtn, trashBtn);
+  function renderToolbar() {
+    if (selected && !entryExists(studio, selected)) selected = null; // device went away
+    trashBtn.disabled = !selected;
+    trashBtn.title = selected ? removeLabel(studio, selected) : 'Select a device to remove it';
+  }
+
+  // ---- this computer's camera/mic permission ----
+  let perm: { camera: PermState; microphone: PermState } = { camera: 'unknown', microphone: 'unknown' };
+  let busy = false;
+  const refreshPerm = async () => {
+    perm = { camera: await permissionState('camera'), microphone: await permissionState('microphone') };
+    render();
+  };
+
+  /** Prompt card shown until camera and mic are allowed (or explains how to unblock them). */
+  function permissionCard(): HTMLElement | null {
+    const states = [perm.camera, perm.microphone];
+    if (states.every((s) => s === 'granted') || states.includes('unknown')) return null;
+    const denied = states.includes('denied');
+    const what =
+      perm.camera !== 'granted' && perm.microphone !== 'granted'
+        ? 'camera and microphone'
+        : perm.camera !== 'granted'
+          ? 'camera'
+          : 'microphone';
+    const allow = h(
+      'button.btn.sm.primary',
+      {
+        disabled: busy,
+        onclick: async () => {
+          busy = true;
+          signature = '';
+          render();
+          const res = await requestMedia({ video: perm.camera !== 'granted', audio: perm.microphone !== 'granted' });
+          busy = false;
+          if (!res.ok) {
+            openModal('Camera & microphone access', h('p', null, res.message));
+          } else {
+            toast('Access allowed. Add a webcam or microphone with the + button under Sources.');
+            void local.restore();
+          }
+          signature = '';
+          await refreshPerm();
+        },
+      },
+      icon('camera'),
+      denied ? 'Try again' : `Allow ${what}`,
+    );
+    return h(
+      'div.device.perm-card',
+      null,
+      h('div.device-head', null, h('span', { class: `dot ${denied ? 'bad' : 'warn'}` }), h('span.name', null, 'This computer')),
+      h(
+        'div.perm-text',
+        null,
+        denied
+          ? `The ${what} ${what.includes('and') ? 'are' : 'is'} blocked for this site. Click the icon at the left of the address bar, set them to "Allow", then press Try again.`
+          : `To use this computer's ${what} in the studio (webcam, local mic), allow access.`,
+      ),
+      h('div.device-actions', null, allow),
+    );
+  }
+
+  onPermissionChange(() => {
+    signature = '';
+    void refreshPerm();
+  });
+  void refreshPerm();
 
   remote.on('change', render);
   registry.on('change', render);
@@ -253,7 +372,7 @@ async function showRelayConnect(studio: Studio, room: Room) {
               onclick: () => void navigator.clipboard?.writeText(url).then(() => toast('Join link copied')),
             },
             h('span', null, 'Copy join link'),
-            h('small', null, 'Anyone with this link can join while on your network — share it only with your devices'),
+            h('small', null, 'Anyone with this link can join while on your network. Share it only with your devices.'),
           ),
         ),
         h(
@@ -279,11 +398,8 @@ async function showRelayConnect(studio: Studio, room: Room) {
         'button.btn.sm.danger',
         {
           title: 'Invalidate the current join link',
-          onclick: () => {
-            if (!confirm('Create a new room code? The current join link stops working and connected devices must rescan.')) return;
-            resetStudioRoom();
-            close();
-            location.reload();
+          onclick: async () => {
+            if (await newRoomCode()) close();
           },
         },
         'New room code',
@@ -303,16 +419,14 @@ export async function showConnect(studio: Studio) {
     entries.unshift({ url: `${location.origin}/source`, kind: 'lan', label: 'Address you opened the studio with' });
   }
   const img = h('img', { alt: 'QR code for the join URL' }) as HTMLImageElement;
-  const qrCaption = h('div.qr-caption');
   const buttons: HTMLButtonElement[] = [];
-  const showQr = async (url: string, caption: string, selected = -1) => {
+  const showQr = async (url: string, selected = -1) => {
     img.src = await QRCode.toDataURL(url, { margin: 1, width: 400, errorCorrectionLevel: 'M' });
-    qrCaption.textContent = caption;
     buttons.forEach((b, j) => b.classList.toggle('on', j === selected));
   };
   const select = async (i: number) => {
     const e = entries[i];
-    if (e) await showQr(e.url, `QR: ${e.label}`, i);
+    if (e) await showQr(e.url, i);
   };
   const lan = entries.filter((e) => e.kind === 'lan');
   openModal(
@@ -320,7 +434,7 @@ export async function showConnect(studio: Studio) {
     h(
       'div.join-qr',
       null,
-      h('div.qr-col', null, img, qrCaption),
+      h('div.qr-col', null, img),
       h(
         'div',
         null,
@@ -339,7 +453,6 @@ export async function showConnect(studio: Studio) {
                 },
               },
               h('span', null, e.url),
-              h('small', { class: e.kind === 'vpn' ? 'vpn' : '' }, e.label),
             ) as HTMLButtonElement;
             buttons.push(b);
             return b;
@@ -356,55 +469,54 @@ export async function showConnect(studio: Studio) {
       h('li', null, 'Open the link on the phone, enter a device name and tap ', h('strong', null, 'Connect'), ', then allow camera and microphone.'),
       h('li', null, 'The device appears in the Devices panel. Click its preview (or +) to add it to the scene.'),
     ),
-    h(
-      'details.cert-help',
-      null,
-      h('summary', null, 'Phone says "Not secure" or "Not private"? Install the studio certificate (one time)'),
-      h(
-        'p',
-        null,
-        'The studio uses its own local certificate authority. Install it once per phone and the warning goes away. ',
-        h(
-          'button.btn.sm',
-          {
-            onclick: () => {
-              const base = entries[0]?.url.replace(/\/source$/, '') ?? location.origin;
-              void showQr(`${base}/webbroadcaster-ca.crt`, 'QR: studio certificate download');
-            },
-          },
-          'Show certificate QR',
-        ),
-      ),
-      h(
-        'p',
-        null,
-        h('strong', null, 'iPhone / iPad (open in Safari): '),
-        'scan, tap ',
-        h('em', null, 'Allow'),
-        ' → Settings → ',
-        h('em', null, 'Profile Downloaded'),
-        ' → Install. Then Settings → General → About → ',
-        h('em', null, 'Certificate Trust Settings'),
-        ' → turn on "WebBroadcaster Local CA".',
-      ),
-      h(
-        'p',
-        null,
-        h('strong', null, 'Android: '),
-        'download it, then Settings → Security → More security settings → Encryption & credentials → ',
-        h('em', null, 'Install a certificate → CA certificate'),
-        ' and pick the downloaded file.',
-      ),
-      h(
-        'p',
-        null,
-        h('strong', null, 'This computer: '),
-        'run ',
-        h('code', null, 'npm run trust'),
-        ' in the project folder, then restart the browser.',
-      ),
-    ),
     entries.length ? '' : h('p', null, 'No network address detected. Make sure this computer is connected to your network.'),
   );
   await select(0);
+}
+
+// ---------------------------------------------------------------- device actions
+// Shared by the Devices toolbar and the right-click menus.
+
+export function addDeviceMenu(studio: Studio): MenuEntry[] {
+  return [
+    { label: 'Connect a phone or device…', icon: 'qr', onClick: () => void showConnect(studio) },
+    { sep: true },
+    { label: 'Webcam on this computer…', icon: 'camera', onClick: () => void pickDevice(studio, 'videoinput') },
+    { label: 'Microphone on this computer…', icon: 'mic', onClick: () => void pickDevice(studio, 'audioinput') },
+  ];
+}
+
+const splitKey = (key: string) => {
+  const i = key.indexOf(':');
+  return [key.slice(0, i), key.slice(i + 1)] as const;
+};
+
+const offlineInputs = (studio: Studio, deviceId: string) => {
+  const live = [...studio.remote.devices.values()].some((d) => d.peer.deviceId === deviceId);
+  return live ? [] : studio.registry.list().filter((i) => i.origin === 'remote' && i.deviceId === deviceId);
+};
+
+export function entryExists(studio: Studio, key: string) {
+  const [kind, id] = splitKey(key);
+  if (kind === 'peer') return studio.remote.devices.has(id);
+  if (kind === 'input') return !!studio.registry.get(id);
+  return offlineInputs(studio, id).length > 0;
+}
+
+export function removeLabel(studio: Studio, key: string) {
+  const [kind, id] = splitKey(key);
+  if (kind === 'peer') return `Disconnect "${studio.remote.devices.get(id)?.peer.name ?? 'device'}"`;
+  if (kind === 'input') return `Remove "${studio.registry.get(id)?.label ?? 'source'}"`;
+  return `Forget "${offlineInputs(studio, id)[0]?.deviceName ?? 'device'}"`;
+}
+
+export function removeDeviceEntry(studio: Studio, key: string) {
+  const [kind, id] = splitKey(key);
+  if (kind === 'peer') {
+    void disconnectDevice(studio, id);
+  } else if (kind === 'input') {
+    studio.local.remove(id);
+  } else {
+    for (const i of offlineInputs(studio, id)) studio.registry.remove(i.id);
+  }
 }

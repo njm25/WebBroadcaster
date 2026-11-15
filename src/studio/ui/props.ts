@@ -2,12 +2,23 @@ import { icon } from '../../lib/icons';
 import { assets, clamp, h, uid } from '../../lib/util';
 import type { Studio } from '../context';
 import { SCENE_H, SCENE_W, fitBox, type Fit, type SceneItem, type TextStyle } from '../scenes';
+import {
+  fontStack,
+  loadSystemFonts,
+  loadedSystemFonts,
+  preloadSystemFontsIfAllowed,
+  primaryFamily,
+  systemFontsSupported,
+} from '../../lib/system-fonts';
+import { segmented, toast } from './common';
 import { itemIcon } from './scenes-dock';
 
 type FieldEl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 interface Field {
-  el: FieldEl;
+  el: FieldEl | HTMLElement;
   read: (it: SceneItem) => string | number | boolean;
+  /** Custom controls (e.g. segmented) update themselves through this. */
+  apply?: (v: string | number | boolean) => void;
 }
 
 const FONTS = [
@@ -17,6 +28,35 @@ const FONTS = [
   ['ui-monospace, Consolas, monospace', 'Monospace'],
   ['Impact, sans-serif', 'Impact'],
 ];
+const LOAD_SYSTEM_FONTS = '__load_system_fonts__';
+
+/**
+ * Font dropdown options: built-in stacks, then this computer's installed fonts
+ * (once loaded), plus the current font if it isn't in either list. Each option
+ * previews in its own typeface.
+ */
+function fontOptions(current: string): HTMLOptionElement[] {
+  const opt = (value: string, label: string, preview = value) =>
+    h('option', { value, 'data-font': preview }, label) as HTMLOptionElement;
+  const out = FONTS.map(([v, l]) => opt(v, l));
+  const known = new Set(FONTS.map(([v]) => v));
+  const installed = loadedSystemFonts();
+  if (installed?.length) {
+    out.push(h('option', { disabled: true, value: '' }, 'Installed fonts') as HTMLOptionElement);
+    for (const family of installed) {
+      const stack = fontStack(family);
+      known.add(stack);
+      out.push(opt(stack, family));
+    }
+  } else if (systemFontsSupported()) {
+    out.push(h('option', { value: LOAD_SYSTEM_FONTS }, 'Show all installed fonts…') as HTMLOptionElement);
+  }
+  if (current && !known.has(current)) {
+    const fam = primaryFamily(current);
+    out.splice(FONTS.length, 0, opt(current, installed ? `${fam} (not installed)` : fam));
+  }
+  return out;
+}
 
 export function mountProps(studio: Studio, root: HTMLElement) {
   const { store, registry, comp } = studio;
@@ -39,16 +79,20 @@ export function mountProps(studio: Studio, root: HTMLElement) {
     return el;
   }
 
-  const num = (label: string, read: (it: SceneItem) => number, write: (v: number) => void, step = 1) =>
-    h(
-      'label',
-      null,
-      label,
-      bind(h('input', { type: 'number', step: String(step) }) as HTMLInputElement, read, (v) => {
+  /** Bare number input bound to an item property. */
+  const numField = (read: (it: SceneItem) => number, write: (v: number) => void, step = 1, min?: number, max?: number) =>
+    bind(
+      h('input', { type: 'number', step: String(step), min: min !== undefined ? String(min) : undefined, max: max !== undefined ? String(max) : undefined }) as HTMLInputElement,
+      read,
+      (v) => {
         const n = Number(v);
-        if (Number.isFinite(n)) write(n);
-      }),
+        if (v.trim() !== '' && Number.isFinite(n)) write(n);
+      },
     );
+
+  /** Compact labelled number input for the two-column grids (X/Y/W/H, crop). */
+  const num = (label: string, read: (it: SceneItem) => number, write: (v: number) => void, step = 1) =>
+    h('label', null, label, numField(read, write, step));
 
   function build() {
     fields = [];
@@ -60,10 +104,7 @@ export function mountProps(studio: Studio, root: HTMLElement) {
         h(
           'p.empty',
           null,
-          'Select a source in the preview or the Sources list to edit it.',
-          h('br'),
-          h('br'),
-          'Drag to move · drag handles to resize (Shift = free aspect) · Alt + drag a handle to crop · Ctrl disables snapping · arrow keys nudge.',
+          'No source selected.',
         ),
       );
       return;
@@ -90,12 +131,6 @@ export function mountProps(studio: Studio, root: HTMLElement) {
       );
       if (!input) sel.append(h('option', { value: src.inputId }, 'Unknown source'));
       const size = comp.naturalSize(it);
-      const autoFit = bind(
-        h('input', { type: 'checkbox' }) as HTMLInputElement,
-        (i) => i.autoFit,
-        (v) => update({ autoFit: v === 'true' }),
-        'change',
-      );
       groups.push(
         h(
           'div.prop-group',
@@ -114,23 +149,40 @@ export function mountProps(studio: Studio, root: HTMLElement) {
               input?.online ? `Live${size ? ` · ${size.w}×${size.h}` : ''}` : 'Offline',
             ),
           ),
-          h(
-            'label',
-            {
-              style: { display: 'flex', gap: '6px', alignItems: 'center', fontSize: '12px' },
-              title: 'When the device rotates between portrait and landscape, re-fit this source automatically',
-            },
-            autoFit,
-            'Auto-fit when the device rotates',
-          ),
         ),
       );
     } else if (src.type === 'text') {
       const ta = bind(h('textarea', { rows: 3 }) as HTMLTextAreaElement, (i) => (i.source as TextStyle).text, (v) => updateSource({ text: v }));
-      const font = bind(h('select') as HTMLSelectElement, (i) => (i.source as TextStyle).font, (v) => updateSource({ font: v }), 'change');
-      font.append(...FONTS.map(([v, l]) => h('option', { value: v }, l)));
-      const align = bind(h('select') as HTMLSelectElement, (i) => (i.source as TextStyle).align, (v) => updateSource({ align: v }), 'change');
-      align.append(h('option', { value: 'left' }, 'Left'), h('option', { value: 'center' }, 'Center'), h('option', { value: 'right' }, 'Right'));
+      const font = bind(
+        h('select') as HTMLSelectElement,
+        (i) => (i.source as TextStyle).font,
+        (v) => {
+          if (v !== LOAD_SYSTEM_FONTS) return updateSource({ font: v });
+          // "Show all installed fonts…": ask once, then rebuild with the full list.
+          font.value = (store.selectedItem?.source as TextStyle | undefined)?.font ?? FONTS[0][0];
+          loadSystemFonts()
+            .then(() => build())
+            .catch((e) => toast(`Couldn't read installed fonts: ${(e as Error).message || e}`));
+        },
+        'change',
+      );
+      font.append(...fontOptions(src.font));
+      const alignCtl = segmented<TextStyle['align']>(
+        [
+          { value: 'left', label: 'Align left', icon: 'alignLeft' },
+          { value: 'center', label: 'Align center', icon: 'alignCenter' },
+          { value: 'right', label: 'Align right', icon: 'alignRight' },
+        ],
+        src.align,
+        (v) => updateSource({ align: v }),
+        'Text alignment',
+      );
+      fields.push({
+        el: alignCtl.el,
+        read: (i) => (i.source as TextStyle).align,
+        apply: (v) => alignCtl.set(v as TextStyle['align']),
+      });
+      const align = alignCtl.el;
       const color = bind(h('input', { type: 'color' }) as HTMLInputElement, (i) => (i.source as TextStyle).color, (v) => updateSource({ color: v }));
       const bgOn = bind(
         h('input', { type: 'checkbox' }) as HTMLInputElement,
@@ -153,10 +205,16 @@ export function mountProps(studio: Studio, root: HTMLElement) {
           h('div.prop-row', null, h('span', null, 'Font'), font),
           h('div.prop-row', null, h('span', null, 'Align'), align),
           h(
-            'div.prop-grid',
-            null,
-            num('Px', (i) => (i.source as TextStyle).size, (v) => updateSource({ size: clamp(Math.round(v), 6, 600) })),
-            num('Ol', (i) => (i.source as TextStyle).outline, (v) => updateSource({ outline: clamp(Math.round(v), 0, 30) })),
+            'div.prop-row',
+            { title: 'Font size in pixels (6–600)' },
+            h('span', null, 'Size'),
+            numField((i) => (i.source as TextStyle).size ?? 72, (v) => updateSource({ size: clamp(Math.round(v), 6, 600) }), 1, 6, 600),
+          ),
+          h(
+            'div.prop-row',
+            { title: 'Black outline around the letters, in pixels (0 = none)' },
+            h('span', null, 'Outline'),
+            numField((i) => (i.source as TextStyle).outline ?? 0, (v) => updateSource({ outline: clamp(Math.round(v), 0, 30) }), 1, 0, 30),
           ),
           h('div.prop-row', null, h('span', null, 'Color'), h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, color, h('label', null, bold, ' Bold'))),
           h('div.prop-row', null, h('span', null, 'Background'), h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center' } }, bgOn, bg)),
@@ -229,11 +287,12 @@ export function mountProps(studio: Studio, root: HTMLElement) {
         h('div.prop-row', null, h('span', null, 'Scaling'), fit),
         h('div.prop-row', null, h('span', null, 'Opacity'), opacity),
         h(
-          'div.prop-grid',
-          null,
-          num('R', (i) => i.radius, (v) => update({ radius: clamp(Math.round(v), 0, 540) })),
-          h('label', null, flip, 'Mirror'),
+          'div.prop-row',
+          { title: 'Rounded corners, in pixels (0 = square)' },
+          h('span', null, 'Corners'),
+          numField((i) => i.radius ?? 0, (v) => update({ radius: clamp(Math.round(v), 0, 540) }), 1, 0, 540),
         ),
+        h('div.prop-row', { title: 'Flip the image left-to-right' }, h('span', null, 'Mirror'), h('div.prop-switch', null, flip)),
       ),
       h(
         'div.prop-group',
@@ -265,8 +324,9 @@ export function mountProps(studio: Studio, root: HTMLElement) {
     for (const f of fields) {
       if (document.activeElement === f.el) continue;
       const v = f.read(it);
-      if (f.el instanceof HTMLInputElement && f.el.type === 'checkbox') f.el.checked = !!v;
-      else if (f.el.value !== String(v)) f.el.value = String(v);
+      if (f.apply) f.apply(v);
+      else if (f.el instanceof HTMLInputElement && f.el.type === 'checkbox') f.el.checked = !!v;
+      else if ('value' in f.el && f.el.value !== String(v)) f.el.value = String(v);
     }
   }
 
@@ -316,4 +376,9 @@ export function mountProps(studio: Studio, root: HTMLElement) {
     if (!root.contains(document.activeElement)) build();
   });
   build();
+
+  // Installed fonts were allowed before? Load them quietly so the list is ready.
+  void preloadSystemFontsIfAllowed().then((list) => {
+    if (list?.length && store.selectedItem?.source.type === 'text') build();
+  });
 }

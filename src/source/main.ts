@@ -2,6 +2,8 @@
 // to a studio. Publishes each media track in its own MediaStream (so the
 // studio can mix them independently) to every connected studio dashboard.
 
+import { autoEnhanceControls } from '../lib/controls';
+import { alertDialog } from '../lib/dialog';
 import { icon } from '../lib/icons';
 import { PeerLink, setMaxBitrate } from '../lib/peer';
 import { QUALITY, type Facing, type PublishedSource, type QualityPreset, type RelayMsg } from '../lib/protocol';
@@ -41,6 +43,8 @@ interface Settings {
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 export function startSourceApp() {
+  // Shared custom dropdowns, switches and tooltips.
+  autoEnhanceControls();
   const info = deviceInfo();
   const deviceId = persistentId('wb.deviceId');
   const settings: Settings = {
@@ -74,6 +78,8 @@ export function startSourceApp() {
     },
   };
   const links = new Map<string, StudioLink>();
+  /** Per studio: is this device on air there (recording + live scene + visible)? */
+  const tallyFrom = new Map<string, boolean>();
   let sig: SignalingLike | null = null;
   let wakeLock: { release(): Promise<void> } | null = null;
   let audioCtx: AudioContext | null = null;
@@ -292,6 +298,8 @@ export function startSourceApp() {
     for (const [id, l] of links) {
       if (!studioIds.has(id) && !l.link.alive) {
         links.delete(id); // before close(): its 'closed' event must not re-enter
+        tallyFrom.delete(id);
+        renderTally();
         l.link.close();
       }
     }
@@ -316,14 +324,11 @@ export function startSourceApp() {
     } else if (msg.kind === 'control') {
       void handleControl(msg);
     } else if (msg.kind === 'tally') {
-      const program = msg.program.some((k) => k === 'camera' || k === 'screen');
-      const preview = !program && msg.preview.some((k) => k === 'camera' || k === 'screen');
-      const t = $('tally');
-      t.classList.toggle('program', program);
-      t.classList.toggle('preview', preview);
-      $('badge-live').hidden = !program;
-      $('badge-pvw').hidden = !preview;
-      $('badge-rec').hidden = !msg.recording;
+      // Red only when all three hold: the studio is recording, this device's
+      // video is in the live (program) scene, and that source is visible there.
+      // (The studio only lists sources that are visible in the program scene.)
+      tallyFrom.set(from, msg.recording && msg.program.some((k) => k === 'camera' || k === 'screen'));
+      renderTally();
     }
   }
 
@@ -382,6 +387,8 @@ export function startSourceApp() {
   function leave(title = 'Disconnected', message = 'You left the studio.') {
     const all = [...links.values()];
     links.clear();
+    tallyFrom.clear();
+    renderTally();
     for (const l of all) l.link.close();
     sig?.close();
     sig = null;
@@ -439,66 +446,143 @@ export function startSourceApp() {
     }
   }
 
-  const btn = {
-    cam: $<HTMLButtonElement>('btn-cam'),
-    flip: $<HTMLButtonElement>('btn-flip'),
-    mic: $<HTMLButtonElement>('btn-mic'),
-    screen: $<HTMLButtonElement>('btn-screen'),
-    settings: $<HTMLButtonElement>('btn-settings'),
-    leave: $<HTMLButtonElement>('btn-leave'),
-  };
-  btn.flip.replaceChildren(icon('flip'));
-  btn.settings.replaceChildren(icon('gear'));
-  btn.leave.replaceChildren(icon('logout'));
-  btn.screen.replaceChildren(icon('screen'));
-  btn.screen.hidden = !canShareScreen();
   $('sheet-close').replaceChildren(icon('x'));
 
+  // ---------- tally ----------
+  function renderTally() {
+    const onAir = [...tallyFrom.values()].some(Boolean);
+    $('tally').classList.toggle('rec', onAir);
+    $('badge-rec').hidden = !onAir;
+  }
+
   function renderControls() {
-    const camOn = !!pubs.camera.track;
     const micOn = !!pubs.mic.track;
-    btn.cam.replaceChildren(icon(camOn ? 'camera' : 'cameraOff'));
-    btn.cam.classList.toggle('off', !camOn);
-    btn.mic.replaceChildren(icon(micOn ? 'mic' : 'micOff'));
-    btn.mic.classList.toggle('off', !micOn);
-    btn.flip.disabled = !camOn;
-    btn.screen.classList.toggle('off', !!pubs.screen.track);
     $('meter-wrap').style.visibility = micOn ? 'visible' : 'hidden';
+    $('badge-muted').hidden = micOn || !pubs.mic.used;
+    if (!menuEl.hidden) renderMenu(); // keep an open menu in sync
   }
 
   const guard = (fn: () => Promise<void>) => () =>
-    fn().catch((e) => alert(`Couldn't change media: ${(e as Error).message || e}`));
+    fn().catch((e) => alertDialog((e as Error).message || String(e), { title: "Couldn't change camera or microphone" }));
 
-  btn.cam.addEventListener(
-    'click',
-    guard(async () => (pubs.camera.track ? publish('camera', null) : await startCamera())),
-  );
-  btn.mic.addEventListener(
-    'click',
-    guard(async () => (pubs.mic.track ? publish('mic', null) : await startMic())),
-  );
-  btn.flip.addEventListener('click', guard(flipCamera));
-  btn.screen.addEventListener(
-    'click',
-    guard(async () => {
-      if (pubs.screen.track) {
-        publish('screen', null);
-        publish('screen-audio', null);
-      } else await startScreen();
-    }),
-  );
-  btn.leave.addEventListener('click', () => leave());
+  // ---------- options menu (single ⋯ button) ----------
+  const moreBtn = $<HTMLButtonElement>('btn-more');
+  const menuEl = $('action-menu');
+  let backdrop: HTMLElement | null = null;
+  let videoInputs: MediaDeviceInfo[] = [];
+
+  const closeMenu = () => {
+    menuEl.hidden = true;
+    moreBtn.setAttribute('aria-expanded', 'false');
+    backdrop?.remove();
+    backdrop = null;
+  };
+  const openMenu = async () => {
+    try {
+      videoInputs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput' && d.deviceId);
+    } catch {
+      videoInputs = [];
+    }
+    backdrop = h('div.action-backdrop', { onclick: closeMenu });
+    menuEl.before(backdrop);
+    menuEl.hidden = false;
+    moreBtn.setAttribute('aria-expanded', 'true');
+    renderMenu();
+  };
+  moreBtn.addEventListener('click', () => (menuEl.hidden ? void openMenu() : closeMenu()));
+
+  function item(iconName: string, label: string, onClick: () => void, opts: { checked?: boolean; danger?: boolean; disabled?: boolean } = {}) {
+    return h(
+      'button',
+      {
+        class: `am-item${opts.danger ? ' danger' : ''}`,
+        role: 'menuitem',
+        disabled: opts.disabled,
+        onclick: () => {
+          closeMenu();
+          onClick();
+        },
+      },
+      icon(iconName),
+      h('span.am-text', null, label),
+      opts.checked ? h('span.am-check', null, '✓') : null,
+    );
+  }
+
+  function renderMenu() {
+    const camOn = !!pubs.camera.track;
+    const micOn = !!pubs.mic.track;
+    const currentId = pubs.camera.track?.getSettings().deviceId ?? '';
+
+    // Camera mode: each lens/camera the browser exposes (e.g. Front, Back, Back Ultra Wide), or Off.
+    const lenses: { label: string; select: () => Promise<void>; checked: boolean }[] = [];
+    const named = videoInputs.filter((d) => d.label);
+    if (named.length > 1) {
+      for (const d of named) {
+        lenses.push({
+          label: d.label.replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, ''),
+          checked: camOn && d.deviceId === currentId,
+          select: async () => {
+            settings.cameraId = d.deviceId;
+            persist();
+            await startCamera();
+          },
+        });
+      }
+    } else {
+      for (const [facing, label] of [
+        ['user', 'Front camera'],
+        ['environment', 'Back camera'],
+      ] as const) {
+        lenses.push({
+          label,
+          checked: camOn && settings.facing === facing,
+          select: async () => {
+            settings.facing = facing;
+            settings.cameraId = '';
+            persist();
+            await startCamera();
+          },
+        });
+      }
+    }
+
+    menuEl.replaceChildren(
+      h('div.am-label', null, 'Camera mode'),
+      ...lenses.map((l) => item('camera', l.label, guard(l.select), { checked: l.checked })),
+      item('cameraOff', 'Camera off', () => publish('camera', null), { checked: !camOn }),
+      h('div.am-sep'),
+      item('flip', 'Flip camera', guard(flipCamera), { disabled: !camOn }),
+      item(micOn ? 'micOff' : 'mic', micOn ? 'Mute microphone' : 'Unmute microphone', guard(async () => (micOn ? publish('mic', null) : await startMic()))),
+      ...(canShareScreen()
+        ? [
+            item('screen', pubs.screen.track ? 'Stop sharing screen' : 'Share screen', guard(async () => {
+              if (pubs.screen.track) {
+                publish('screen', null);
+                publish('screen-audio', null);
+              } else await startScreen();
+            })),
+          ]
+        : []),
+      item('gear', 'Settings', openSettings),
+      h('div.am-sep'),
+      item('logout', 'Disconnect', () => leave(), { danger: true }),
+    );
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !menuEl.hidden) closeMenu();
+  });
 
   // Settings sheet
   const sheet = $('sheet');
-  btn.settings.addEventListener('click', () => {
+  function openSettings() {
     $<HTMLInputElement>('set-name').value = settings.name;
     $<HTMLSelectElement>('set-quality').value = settings.quality;
     $<HTMLInputElement>('set-processing').checked = settings.processing;
     $<HTMLInputElement>('set-autogain').checked = settings.autoGain;
     refreshDeviceLists();
     sheet.hidden = false;
-  });
+  }
   $('sheet-close').addEventListener('click', () => (sheet.hidden = true));
   sheet.addEventListener('click', (e) => {
     if (e.target === sheet) sheet.hidden = true;

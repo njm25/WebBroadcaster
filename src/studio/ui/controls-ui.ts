@@ -26,9 +26,9 @@ export function mountControls(studio: Studio, root: HTMLElement) {
   const formats = supportedFormats();
   if (!formats.some((f) => f.id === settings.formatId) && formats[0]) settings.formatId = formats[0].id;
 
-  const recBtn = h('button.btn.full') as HTMLButtonElement;
-  const pauseBtn = h('button.btn.sm', { title: 'Pause / resume recording' }, 'Pause') as HTMLButtonElement;
-  const recInfo = h('div.muted', { style: { fontFamily: 'var(--mono)', fontSize: '12px' } });
+  const recBtn = h('button.rec-btn', { type: 'button' }) as HTMLButtonElement;
+  const pauseBtn = h('button.rec-btn', { type: 'button' }) as HTMLButtonElement;
+  const recInfo = h('div.rec-info');
   const recErr = h('div.rec-error');
   const recList = h('div.rec-list');
   let captureTrack: MediaStreamTrack | null = null;
@@ -118,8 +118,7 @@ export function mountControls(studio: Studio, root: HTMLElement) {
   const outputControls = [res, fps, fmt, br, toDisk];
 
   box.append(
-    recBtn,
-    h('div', { style: { display: 'flex', gap: '6px', alignItems: 'center' } }, pauseBtn, recInfo),
+    h('div.rec-row', null, recBtn, pauseBtn, recInfo),
     recErr,
     h('div.ctrl-row', null, 'Transition', transition),
     h('div.ctrl-row', null, 'Duration', h('div', { style: { display: 'flex', gap: '4px', alignItems: 'center' } }, duration, 'ms')),
@@ -136,10 +135,16 @@ export function mountControls(studio: Studio, root: HTMLElement) {
   function render() {
     const st = recorder.state;
     const active = st !== 'inactive';
-    recBtn.replaceChildren(icon(active ? 'square' : 'camera'), active ? 'Stop Recording' : 'Start Recording');
-    recBtn.className = `btn full ${active ? 'live' : 'primary'}`;
+    recBtn.replaceChildren(icon(active ? 'stop' : 'record'));
+    recBtn.classList.toggle('recording', st === 'recording');
+    recBtn.classList.toggle('active', active);
+    recBtn.title = active ? 'Stop recording (F9)' : 'Start recording (F9)';
+    recBtn.setAttribute('aria-label', recBtn.title);
+    pauseBtn.replaceChildren(icon(st === 'paused' ? 'play' : 'pause'));
     pauseBtn.disabled = !active;
-    pauseBtn.textContent = st === 'paused' ? 'Resume' : 'Pause';
+    pauseBtn.title = st === 'paused' ? 'Resume recording (Shift+F9)' : 'Pause recording (Shift+F9)';
+    pauseBtn.setAttribute('aria-label', pauseBtn.title);
+    pauseBtn.classList.toggle('paused', st === 'paused');
     for (const c of outputControls) c.disabled = active || (c === toDisk && !Recorder.canWriteToDisk());
     recErr.textContent = recorder.error ?? '';
     recList.replaceChildren(
@@ -158,11 +163,12 @@ export function mountControls(studio: Studio, root: HTMLElement) {
     tick();
   }
   function tick() {
-    if (recorder.state === 'inactive') {
-      recInfo.textContent = '';
-      return;
-    }
-    recInfo.textContent = `${formatDuration(recorder.elapsed)} · ${formatBytes(recorder.bytes)}`;
+    const active = recorder.state !== 'inactive';
+    recInfo.classList.toggle('idle', !active);
+    recInfo.replaceChildren(
+      h('span.rec-time', null, formatDuration(active ? recorder.elapsed : 0)),
+      active ? h('span.rec-size', null, formatBytes(recorder.bytes)) : '',
+    );
   }
   recorder.on('state', render);
   recorder.on('saved', (r) => {
@@ -176,4 +182,9 @@ export function mountControls(studio: Studio, root: HTMLElement) {
   });
   setInterval(tick, 500);
   render();
+
+  return {
+    /** Same as pressing Start/Stop Recording (keeps the user gesture for the save dialog). */
+    toggleRecording: () => recBtn.click(),
+  };
 }

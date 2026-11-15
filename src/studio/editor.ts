@@ -32,6 +32,89 @@ export class Editor {
   readonly overlay = document.createElement('canvas');
   private octx = this.overlay.getContext('2d')!;
   private drag: Drag | null = null;
+  /** Inline text editing on the canvas (double-click a text source). */
+  private textEdit: { id: string; ta: HTMLTextAreaElement; original: string; stop: (commit: boolean) => void } | null = null;
+
+  /** Open an in-place editor over a text source; click outside to finish, Esc to cancel. */
+  startTextEdit(itemId: string) {
+    this.textEdit?.stop(true);
+    const it = this.store.editing.items.find((i) => i.id === itemId);
+    if (!it || it.source.type !== 'text') return;
+    const host = this.overlay.parentElement;
+    if (!host) return;
+    this.store.select(itemId);
+
+    const ta = document.createElement('textarea');
+    ta.className = 'canvas-text-edit';
+    ta.value = it.source.text;
+    ta.spellcheck = false;
+    ta.setAttribute('aria-label', 'Edit text');
+    host.append(ta);
+
+    const original = it.source.text;
+    const write = (text: string) => {
+      const cur = this.store.editing.items.find((i) => i.id === itemId);
+      if (cur && cur.source.type === 'text' && cur.source.text !== text) {
+        this.store.updateItem(itemId, { source: { ...cur.source, text } });
+      }
+    };
+    ta.addEventListener('input', () => write(ta.value));
+    ta.addEventListener('keydown', (e) => {
+      e.stopPropagation(); // typing must not trigger studio shortcuts
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        stop(false);
+      } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        stop(true);
+      }
+    });
+    const onDown = (e: PointerEvent) => {
+      if (e.target !== ta) stop(true);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+
+    const stop = (commit: boolean) => {
+      if (this.textEdit?.ta !== ta) return;
+      this.textEdit = null;
+      document.removeEventListener('pointerdown', onDown, true);
+      if (!commit) write(original);
+      ta.remove();
+      this.overlay.focus();
+    };
+    this.textEdit = { id: itemId, ta, original, stop };
+    this.layoutTextEdit();
+    ta.focus();
+    ta.select();
+  }
+
+  /** Keep the inline text editor sized/styled to match the rendered text. */
+  private layoutTextEdit() {
+    const ed = this.textEdit;
+    if (!ed) return;
+    const it = this.store.editing.items.find((i) => i.id === ed.id);
+    if (!it || it.source.type !== 'text') return ed.stop(true);
+    const nat = this.comp.naturalSize(it);
+    if (!nat || !nat.h) return;
+    const s = this.overlay.getBoundingClientRect().width / SCENE_W; // CSS px per scene unit
+    const px = (it.h / nat.h) * s; // CSS px per text-canvas px
+    const src = it.source;
+    const pad = src.bg ? src.size * 0.35 : src.outline + 4;
+    Object.assign(ed.ta.style, {
+      left: `${it.x * s}px`,
+      top: `${it.y * s}px`,
+      width: `${Math.max(it.w * s, 40)}px`,
+      height: `${it.h * s}px`,
+      padding: `${pad * px}px`,
+      font: `${src.bold ? 700 : 400} ${src.size * px}px ${src.font}`,
+      lineHeight: `${Math.round(src.size * 1.25) * px}px`,
+      textAlign: src.align,
+      // The canvas already draws the real text (it's also the live output), so the
+      // edit box's own glyphs stay invisible; only its caret and selection show.
+      color: 'transparent',
+      background: 'transparent',
+    });
+  }
   private hoverId: string | null = null;
   private guides: { x?: number; y?: number } = {};
 
@@ -49,7 +132,14 @@ export class Editor {
     o.addEventListener('pointercancel', (e) => this.onUp(e));
     o.addEventListener('pointerleave', () => (this.hoverId = null));
     o.addEventListener('contextmenu', (e) => e.preventDefault());
-    comp.onFrame(() => this.draw());
+    o.addEventListener('dblclick', (e) => {
+      const it = this.itemAt(e.clientX, e.clientY);
+      if (it?.source.type === 'text' && !it.locked) this.startTextEdit(it.id);
+    });
+    comp.onFrame(() => {
+      this.draw();
+      this.layoutTextEdit();
+    });
   }
 
   /** Overlay pixels per scene unit. */
@@ -80,10 +170,18 @@ export class Editor {
     const tol = 9 / this.k;
     const pts = this.handlePoints(it);
     for (const hd of HANDLES) {
+      if (it.source.type === 'text' && (hd === 'e' || hd === 'w')) continue;
       const [hx, hy] = pts[hd];
       if (Math.abs(p.x - hx) <= tol && Math.abs(p.y - hy) <= tol) return hd;
     }
     return null;
+  }
+
+  /** Topmost visible scene item under a screen point (for right-click menus). */
+  itemAt(clientX: number, clientY: number): SceneItem | null {
+    const r = this.overlay.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    return this.hitItem({ x: ((clientX - r.left) / r.width) * SCENE_W, y: ((clientY - r.top) / r.height) * SCENE_H });
   }
 
   private hitItem(p: { x: number; y: number }): SceneItem | null {
@@ -142,7 +240,15 @@ export class Editor {
       if (snap) [x, y] = this.snapMove(x, y, o.w, o.h);
       patch = { x: Math.round(x), y: Math.round(y) };
     } else if (d.mode === 'resize' && d.handle) {
-      patch = this.resize(o, d.handle, dx, dy, !e.shiftKey, snap);
+      if (o.source.type === 'text') {
+        // Text scales by height only; its width always follows the text.
+        if (d.handle === 'e' || d.handle === 'w') return;
+        patch = this.resize(o, d.handle, dx, dy, true, snap);
+        delete patch.w;
+        if (d.handle.includes('w')) delete patch.x; // keep the left edge anchored
+      } else {
+        patch = this.resize(o, d.handle, dx, dy, !e.shiftKey, snap);
+      }
     } else if (d.mode === 'crop' && d.handle) {
       patch = this.crop(o, d.handle, dx, dy);
     }
@@ -280,7 +386,7 @@ export class Editor {
         c.font = `${13 * u}px system-ui, sans-serif`;
         c.textAlign = 'center';
         c.textBaseline = 'middle';
-        c.fillText(`${this.labelOf(it)} — no signal`, it.x + it.w / 2, it.y + it.h / 2);
+        c.fillText(`${this.labelOf(it)} (no signal)`, it.x + it.w / 2, it.y + it.h / 2);
         c.restore();
       }
       if (it.id === this.hoverId && it !== sel) {
@@ -324,7 +430,8 @@ export class Editor {
         c.fillStyle = '#fff';
         c.strokeStyle = '#e5484d';
         c.lineWidth = 1.5 * u;
-        for (const [hx, hy] of Object.values(this.handlePoints(sel))) {
+        for (const [hd, [hx, hy]] of Object.entries(this.handlePoints(sel))) {
+          if (sel.source.type === 'text' && (hd === 'e' || hd === 'w')) continue;
           c.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
           c.strokeRect(hx - hs / 2, hy - hs / 2, hs, hs);
         }

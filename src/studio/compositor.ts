@@ -108,6 +108,7 @@ export class Compositor {
       if (t >= 1 || !this.store.find(tr.from)) this.transition = null;
     }
 
+    this.syncTextBoxes();
     ctx.globalAlpha = 1;
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
@@ -160,6 +161,31 @@ export class Compositor {
       this.fpsWindow = now;
     }
     for (const fn of this.frameListeners) fn();
+  }
+
+  /**
+   * Text items scale by height only: the box height sets the text size and the
+   * width always follows the text (so typing more makes the box longer instead
+   * of squeezing the letters). Left edge stays put.
+   */
+  private syncTextBoxes() {
+    let changed = false;
+    for (const scene of this.store.scenes) {
+      for (const it of scene.items) {
+        if (it.source.type !== 'text' || it.h <= 0) continue;
+        const c = this.textCanvas(it.id, it.source);
+        const { l, t, r, b } = it.crop;
+        const srcW = c.width * Math.max(0.02, 1 - l - r);
+        const srcH = c.height * Math.max(0.02, 1 - t - b);
+        const w = Math.max(1, Math.round((srcW * it.h) / srcH));
+        if (Math.abs(w - it.w) > 1 || it.fit !== 'stretch') {
+          it.w = w;
+          it.fit = 'stretch'; // box now matches the text's aspect exactly
+          changed = true;
+        }
+      }
+    }
+    if (changed) this.store.changed();
   }
 
   private drawSceneTo(buf: HTMLCanvasElement, scene: Scene | undefined) {

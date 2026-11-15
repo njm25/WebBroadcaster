@@ -7,14 +7,6 @@
       "runtimeArgs": ["run", "dev"],
       "port": 4321,
       "url": "https://localhost:4321"
-    },
-    {
-      "name": "pages-sim",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["C:/Users/aweso/AppData/Local/Temp/claude/70ae0c0f64fe7f72/c424549a-d855-428a-80b6-5511ffce7a21/scratchpad/pages-sim.mjs", "dist"],
-      "port": 4600,
-      "autoPort": false,
-      "url": "http://localhost:4600"
     }
   ]
 }

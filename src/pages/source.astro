@@ -41,22 +41,20 @@ import '../styles/source.css';
       <header class="topbar">
         <div class="status" id="status"><span class="dot"></span><span id="status-text">Connecting…</span></div>
         <div class="badges">
-          <span class="badge rec" id="badge-rec" hidden>REC</span>
-          <span class="badge onair" id="badge-live" hidden>LIVE</span>
-          <span class="badge pvw" id="badge-pvw" hidden>PREVIEW</span>
+          <span class="badge rec" id="badge-rec" hidden>● REC</span>
+          <span class="badge muted-badge" id="badge-muted" hidden>MIC OFF</span>
         </div>
       </header>
 
       <div class="meter-wrap" id="meter-wrap"><div class="meter" id="meter"></div></div>
 
       <nav class="controls">
-        <button class="ctl" id="btn-cam" aria-label="Toggle camera"></button>
-        <button class="ctl" id="btn-flip" aria-label="Switch camera"></button>
-        <button class="ctl" id="btn-mic" aria-label="Toggle microphone"></button>
-        <button class="ctl" id="btn-screen" aria-label="Share screen" hidden></button>
-        <button class="ctl" id="btn-settings" aria-label="Settings"></button>
-        <button class="ctl leave" id="btn-leave" aria-label="Disconnect"></button>
+        <button class="ctl-more" id="btn-more" aria-label="Options" aria-haspopup="menu" aria-expanded="false">
+          <span></span><span></span><span></span>
+        </button>
       </nav>
+
+      <div class="action-menu" id="action-menu" role="menu" hidden></div>
 
       <div class="sheet" id="sheet" hidden>
         <div class="sheet-inner">

@@ -11,12 +11,10 @@
 .studio > .audio-banner {
   flex: none;
 }
-.studio > .main {
+.studio > .dock-root {
   flex: 1;
-}
-.studio > .docks {
-  flex: none;
-  height: 300px;
+  min-height: 0;
+  position: relative;
 }
 
 /* ---------- top bar ---------- */
@@ -36,24 +34,120 @@
   font-weight: 650;
   letter-spacing: 0.01em;
 }
-.brand-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 3px solid var(--live);
+.app-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
 }
-.top-status {
+/* ---------- menu bar ---------- */
+.studio .topbar {
+  gap: 10px;
+}
+.menubar {
   display: flex;
-  gap: 16px;
-  color: var(--muted);
-  font-size: 12px;
-  font-family: var(--mono);
+  align-items: stretch;
+  height: 100%;
+  margin-right: 8px;
 }
-.top-status span {
-  display: inline-flex;
+.menubar-item {
+  border: none;
+  background: none;
+  color: var(--text);
+  padding: 0 10px;
+  font-size: 13px;
+  border-radius: 4px;
+  margin: 6px 0;
+  cursor: default;
+}
+.menubar-item:hover,
+.menubar-item.open {
+  background: var(--panel-3);
+}
+.menubar-item u {
+  text-decoration: none;
+}
+.menubar.alt-held .menubar-item u,
+.menubar.keyboard .menubar-item u {
+  text-decoration: underline;
+}
+.dropdown {
+  position: fixed;
+  z-index: 300;
+  min-width: 240px;
+  padding: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px #000a;
+  font-size: 13px;
+  animation: dd-in 0.12s ease-out;
+  transform-origin: top left;
+}
+@keyframes dd-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+.dd-item {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
   align-items: center;
   gap: 6px;
+  height: 28px;
+  padding: 0 10px 0 6px;
+  border-radius: 5px;
+  cursor: default;
+  white-space: nowrap;
+  outline: none;
 }
+.dd-item:hover:not(.disabled),
+.dd-item.kbd {
+  background: var(--accent-2);
+  color: #fff;
+}
+.dd-item:hover:not(.disabled) .dd-keys,
+.dd-item.kbd .dd-keys {
+  color: #dbe7ff;
+}
+.dd-item.disabled {
+  color: var(--faint);
+}
+.dd-check {
+  text-align: center;
+  font-size: 12px;
+}
+.dd-keys {
+  color: var(--faint);
+  font-size: 12px;
+  padding-left: 24px;
+}
+.dd-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+.shortcut-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.shortcut-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+.shortcut-table kbd {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
 .top-right {
   margin-left: auto;
   display: flex;
@@ -67,8 +161,12 @@
   cursor: pointer;
   user-select: none;
 }
-.switch input {
-  accent-color: var(--accent);
+.props .cs-trigger {
+  height: 28px;
+}
+.ctrl-row .cs-trigger {
+  height: 26px;
+  font-size: 12px;
 }
 .rec-pill {
   font-family: var(--mono);
@@ -99,12 +197,8 @@
 }
 
 /* ---------- views ---------- */
-.main {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 290px;
-  min-height: 0;
-}
 .views {
+  flex: 1 1 0;
   display: flex;
   gap: 10px;
   padding: 10px;
@@ -182,7 +276,6 @@
 
 /* ---------- properties ---------- */
 .props {
-  border-left: 1px solid var(--border);
   background: var(--panel);
   overflow: auto;
   padding: 12px;
@@ -258,39 +351,12 @@
   min-height: 64px;
 }
 .props select,
-.props input[type='text'] {
+.props input[type='text'],
+.prop-row > input[type='number'] {
   width: 100%;
   height: 28px;
 }
 
-/* ---------- docks ---------- */
-.docks {
-  display: grid;
-  grid-template-columns: 200px 260px minmax(300px, 1fr) 320px 230px;
-  border-top: 1px solid var(--border);
-  background: var(--panel);
-  min-height: 0;
-}
-.dock {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-  border-right: 1px solid var(--border);
-}
-.dock:last-child {
-  border-right: none;
-}
-.dock-head {
-  padding: 7px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  border-bottom: 1px solid var(--border);
-  background: var(--panel-2);
-}
 .dock-body {
   flex: 1;
   min-height: 0;
@@ -549,66 +615,108 @@
   gap: 6px;
 }
 .device {
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--panel-2);
-  padding: 7px 8px;
+  padding: 8px 10px 10px;
   display: grid;
-  gap: 5px;
+  gap: 8px;
+  min-width: 0;
 }
+.devices {
+  overflow-x: hidden;
+}
+/* Header: status dot · name over a small status line · action icons */
 .device-head {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
+  min-width: 0;
 }
-.device-head .name {
+.dev-title {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.dev-title .name {
+  font-size: 13px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.device-head .platform {
-  color: var(--faint);
+.dev-sub {
   font-size: 11px;
-  font-weight: 400;
-  margin-left: 4px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.dev-note {
+  font-size: 12px;
+  color: #ff9a9d;
+}
+/* Source rows: preview/icon · name over details · add button */
 .device-src {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: 10px;
+  min-width: 0;
+}
+.src-thumb {
+  flex: none;
+  width: 112px;
+  height: 63px;
+  object-fit: contain;
+  background: #000;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.src-icon {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--panel-3);
   color: var(--muted);
 }
-.device-src .lbl {
+.src-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.src-text .lbl {
+  font-size: 13px;
   color: var(--text);
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.device-src .lbl {
-  flex: 1 1 auto;
+.src-text .lbl.muted {
+  color: var(--muted);
 }
-.device-src .stat {
-  white-space: nowrap;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 0 1 auto;
-}
-.devices {
-  overflow-x: hidden;
-}
-.device,
-.device-src {
-  min-width: 0;
-}
-.device-src .stat {
-  margin-left: auto;
+.src-text .stat {
   font-family: var(--mono);
-  font-size: 10px;
-  color: var(--faint);
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.perm-card {
+  border: 1px solid #5c4515;
+  background: #2a2412;
+}
+.perm-text {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #e9d6a8;
 }
 .device-actions {
   display: flex;
@@ -623,6 +731,87 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+/* Record / pause: round icon buttons on one row with the timer */
+.rec-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rec-btn {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel-3);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s,
+    transform 0.1s;
+}
+.rec-btn .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+.rec-btn:hover:not(:disabled) {
+  background: #323846;
+}
+.rec-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.rec-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+/* Idle record button: red dot */
+.rec-btn:first-child:not(.active) {
+  color: var(--live);
+}
+/* Recording: solid red with a soft pulse; icon becomes a stop square */
+.rec-btn.active {
+  background: var(--live);
+  border-color: var(--live);
+  color: #fff;
+}
+.rec-btn.recording {
+  animation: rec-pulse 1.6s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(229 72 77 / 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgb(229 72 77 / 0);
+  }
+}
+.rec-btn.paused {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.rec-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-left: 4px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.2;
+  min-width: 0;
+}
+.rec-info.idle {
+  color: var(--faint);
+}
+.rec-size {
+  font-size: 11px;
+  color: var(--muted);
 }
 .controls .btn.full {
   width: 100%;
@@ -794,4 +983,243 @@
 .pick-list .menu-item {
   height: 36px;
   background: var(--panel-2);
+}
+
+/* ---------- docking (dockview) ---------- */
+.panel-src {
+  display: none;
+}
+.dock-panel-host {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+.panel-fill {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.panel-fill.props {
+  display: block;
+  overflow: auto;
+}
+#panel-program > .views {
+  flex: 1;
+}
+.dock-body {
+  background: var(--panel);
+}
+
+/* Theme: dockview's dark theme mapped onto the studio palette */
+.dockview-theme-studio {
+  --dv-group-view-background-color: var(--panel);
+  --dv-tabs-and-actions-container-background-color: var(--panel-2);
+  --dv-tabs-and-actions-container-height: 30px;
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-activegroup-visiblepanel-tab-background-color: var(--panel);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--panel-2);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--panel);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--panel-2);
+  --dv-activegroup-visiblepanel-tab-color: var(--text);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-inactivegroup-visiblepanel-tab-color: #c3c8d2;
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--faint);
+  --dv-tab-divider-color: var(--border);
+  --dv-separator-border: var(--border);
+  --dv-paneview-header-border-color: var(--border);
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: var(--accent);
+  --dv-active-sash-transition-delay: 0.15s;
+  --dv-drag-over-background-color: rgb(76 141 255 / 0.18);
+  --dv-drag-over-border-color: var(--accent);
+  --dv-edge-dock-indicator-color: var(--accent);
+  --dv-icon-hover-background-color: #ffffff14;
+  --dv-floating-box-shadow: 0 18px 50px #000b, 0 2px 8px #0008;
+  --dv-floating-border: 1px solid var(--border);
+  --dv-floating-titlebar-height: 18px;
+  --dv-context-menu-background-color: var(--panel-2);
+  --dv-context-menu-color: var(--text);
+  --dv-scrollbar-background-color: var(--scroll-thumb);
+  height: 100%;
+}
+.dockview-theme-studio .dv-tab {
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+/* Active tab of the focused group gets a VS-style accent bar */
+.dockview-theme-studio .dv-groupview.dv-active-group .dv-tab.dv-active-tab {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+/* Header buttons (float / pop out / maximize) */
+.dock-actions {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  gap: 2px;
+  padding: 0 4px;
+}
+.dock-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--faint);
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+/* Only while hovering the panel (or tabbing to a button with the keyboard) */
+.dv-groupview:hover .dock-action,
+.dock-action:focus-visible {
+  opacity: 1;
+}
+.dock-action:hover {
+  background: #ffffff14;
+  color: var(--text);
+}
+.dock-action[hidden] {
+  display: none;
+}
+
+/* Devices: selectable cards/rows (for the trash button and right-click) */
+.device {
+  cursor: default;
+  border: 1px solid transparent;
+}
+.device.offline {
+  opacity: 0.6;
+}
+.device.selected,
+.device-src.selectable.selected {
+  border-color: var(--accent);
+  background: #1f2c45;
+}
+.device-src.selectable {
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+}
+.device-src.selectable:hover {
+  background: #ffffff0a;
+}
+
+/* ---------- drag to reorder (src/studio/ui/sortable.ts) ---------- */
+.sort-ghost {
+  position: fixed;
+  z-index: 900;
+  pointer-events: none;
+  background: var(--panel-3);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  box-shadow: 0 10px 28px #000a;
+  opacity: 0.95;
+  transform: scale(1.02);
+}
+.sort-line {
+  position: fixed;
+  z-index: 901;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgb(76 141 255 / 0.8);
+  pointer-events: none;
+}
+.list-item.sort-source {
+  opacity: 0.35;
+}
+body.sorting,
+body.sorting * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+/* ---------- inline text editing on the canvas (double-click a text source) ---------- */
+.canvas-text-edit {
+  position: absolute;
+  z-index: 5;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  box-shadow: 0 0 0 4px rgb(76 141 255 / 0.25);
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  caret-color: var(--accent);
+  min-height: 0;
+}
+.canvas-text-edit:focus {
+  border: none;
+}
+/* Selection inside the (transparent) inline text editor: highlight over the canvas text */
+.canvas-text-edit::selection {
+  background: rgb(76 141 255 / 0.4);
+  color: transparent;
+}
+
+/* ---------- segmented icon control (ui/common.ts segmented()) ---------- */
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  justify-self: start;
+}
+.seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.seg-btn:hover {
+  color: var(--text);
+  background: #ffffff10;
+}
+.seg-btn.active {
+  background: var(--accent-2);
+  color: #fff;
+}
+.seg-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Destructive menu items (delete, remove…) */
+.dd-item.danger:not(.disabled) {
+  color: #ff8a8d;
+}
+.dd-item.danger:not(.disabled):hover,
+.dd-item.danger.kbd {
+  background: var(--live);
+  color: #fff;
+}
+/* A switch on its own property row sits at the left of the value column */
+.prop-switch {
+  display: flex;
+  align-items: center;
+  height: 28px;
 }

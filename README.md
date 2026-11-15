@@ -102,7 +102,9 @@ src/studio/
   editor.ts        interactive overlay: select / move / resize / crop
   mixer.ts         Web Audio mixer
   recorder.ts      MediaRecorder wrapper
-  ui/              dock panels (scenes, sources, properties, mixer, devices, controls)
+  docking.ts       Visual Studio-style docking (dockview): drag/tab/float/pop-out panels, saved layout
+  ui/              panels (scenes, sources, properties, mixer, devices, controls), menu bar, menus
+src/styles/vendor/dockview.css  dockview stylesheet (MIT), vendored: dockview-core ships without it
 ```
 
 Some design choices:

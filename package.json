@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "astro": "^7.4.12",
+    "dockview-core": "^8.9.0",
     "qrcode": "^1.5.4",
     "selfsigned": "^5.5.0",
     "ws": "^8.23.0"

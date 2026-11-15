@@ -163,3 +163,392 @@ input[type='range'] {
   height: 16px;
   flex: none;
 }
+
+/* ---------- standard dialogs (src/lib/dialog.ts) ---------- */
+.dlg-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  animation: dlg-fade 0.14s ease-out;
+}
+.dlg-backdrop.closing {
+  animation: dlg-fade 0.12s ease-in reverse forwards;
+}
+.dlg {
+  width: min(420px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 20px 20px 16px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 64px #000b;
+  color: var(--text);
+  animation: dlg-pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+.dlg-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 650;
+}
+.dlg-message {
+  color: var(--muted);
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.dlg-input {
+  width: 100%;
+  height: 38px;
+  margin-top: 12px;
+  font-size: 15px;
+}
+.dlg-error {
+  min-height: 18px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #ff9a9d;
+}
+.dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.dlg-btn {
+  min-width: 84px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-3);
+  color: var(--text);
+  font-weight: 500;
+}
+.dlg-btn:hover {
+  background: #303643;
+}
+.dlg-btn.primary {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  color: #fff;
+}
+.dlg-btn.primary:hover {
+  background: var(--accent);
+}
+.dlg-btn.danger {
+  background: var(--live);
+  border-color: var(--live);
+  color: #fff;
+}
+.dlg-btn.danger:hover {
+  background: #f0595e;
+}
+.dlg-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@keyframes dlg-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes dlg-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+@media (max-width: 480px) {
+  .dlg-actions {
+    flex-direction: column-reverse;
+  }
+  .dlg-btn {
+    width: 100%;
+    height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dlg-backdrop,
+  .dlg {
+    animation: none !important;
+  }
+}
+
+/* ---------- switches: every checkbox renders as a toggle (src/lib/controls.ts) ---------- */
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-3);
+  vertical-align: middle;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease;
+}
+input[type='checkbox']::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #c3c8d2;
+  box-shadow: 0 1px 2px #0006;
+  transition:
+    transform 0.2s cubic-bezier(0.3, 1.4, 0.5, 1),
+    background 0.18s ease;
+}
+input[type='checkbox']:checked {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+input[type='checkbox']:checked::before {
+  transform: translateX(14px);
+  background: #fff;
+}
+input[type='checkbox']:hover:not(:disabled) {
+  border-color: #3a4150;
+}
+input[type='checkbox']:checked:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type='checkbox']:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (pointer: coarse) {
+  input[type='checkbox'] {
+    width: 44px;
+    height: 26px;
+  }
+  input[type='checkbox']::before {
+    width: 20px;
+    height: 20px;
+  }
+  input[type='checkbox']:checked::before {
+    transform: translateX(18px);
+  }
+}
+
+/* ---------- dropdowns: every <select> becomes a custom dropdown (src/lib/select.ts) ---------- */
+.cs {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+.cs > .cs-native {
+  position: absolute !important;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  opacity: 0;
+  pointer-events: none;
+}
+.cs-trigger {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.cs-trigger:hover:not(:disabled) {
+  border-color: #3a4150;
+}
+.cs.open .cs-trigger,
+.cs-trigger:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+.cs-trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.cs-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-chevron {
+  display: flex;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.cs.open .cs-chevron {
+  transform: rotate(180deg);
+}
+.cs-list {
+  position: fixed;
+  z-index: 1100;
+  overflow: auto;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  box-shadow: 0 12px 32px #000a;
+  font-size: 13px;
+  animation: cs-in 0.12s ease-out;
+}
+.cs-list.above {
+  animation-name: cs-in-above;
+}
+.cs-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 12px 4px 6px;
+  border-radius: 5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cs-option.active {
+  background: var(--accent-2);
+  color: #fff;
+}
+.cs-option[aria-disabled='true'] {
+  color: var(--faint);
+  cursor: default;
+}
+.cs-check {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+}
+@media (pointer: coarse) {
+  .cs-option {
+    min-height: 44px;
+    font-size: 16px;
+  }
+}
+@keyframes cs-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@keyframes cs-in-above {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  input[type='checkbox'],
+  input[type='checkbox']::before,
+  .cs-list,
+  .cs-chevron {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ---------- tooltips: replace native title tooltips (src/lib/tooltip.ts) ---------- */
+.tip {
+  position: fixed;
+  z-index: 1200;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0d1016f2;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-line;
+  pointer-events: none;
+  box-shadow: 0 6px 20px #0009;
+  opacity: 0;
+  transform: translateY(3px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+.tip.below {
+  transform: translateY(-3px);
+}
+.tip.visible {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tip {
+    transition: none;
+  }
+}
+
+/* ---------- scrollbars: one standard look for every scrollable area ---------- */
+:root {
+  --scroll-size: 10px;
+  --scroll-thumb: rgb(255 255 255 / 0.14);
+  --scroll-thumb-hover: rgb(255 255 255 / 0.26);
+  --scroll-thumb-active: var(--accent);
+}
+/* Chromium / Safari: rounded thumb that floats inside a transparent track */
+::-webkit-scrollbar {
+  width: var(--scroll-size);
+  height: var(--scroll-size);
+  background: transparent;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  min-width: 32px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  background-color: var(--scroll-thumb);
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scroll-thumb-hover);
+}
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--scroll-thumb-active);
+}
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+/* Firefox (and browsers without ::-webkit-scrollbar): standard properties.
+   Kept behind @supports so Chromium keeps the rounded style above. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+}

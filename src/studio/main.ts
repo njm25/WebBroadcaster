@@ -1,5 +1,6 @@
 // Studio dashboard entry point: wires the engine modules to the UI.
 
+import { autoEnhanceControls } from '../lib/controls';
 import { signalMode, studioRoom } from '../lib/room';
 import { createSignaling } from '../lib/signaling';
 import { deviceInfo, loadJSON, persistentId, saveJSON } from '../lib/util';
@@ -7,6 +8,7 @@ import { Compositor } from './compositor';
 import type { OutputSettings, Studio } from './context';
 import { Editor } from './editor';
 import { InputRegistry } from './inputs';
+import { mountDocking } from './docking';
 import { LocalSources } from './local';
 import { Mixer } from './mixer';
 import { Recorder } from './recorder';
@@ -14,6 +16,9 @@ import { RemoteManager } from './remote';
 import { SCENE_H, SCENE_W, SceneStore, fitBox } from './scenes';
 import { mountControls } from './ui/controls-ui';
 import { mountDevices } from './ui/devices-ui';
+import { mountContextMenus } from './ui/context-menus';
+import { mountMenubar } from './ui/menubar';
+import { buildMenus } from './ui/menus';
 import { mountMixer } from './ui/mixer-ui';
 import { mountProps } from './ui/props';
 import { mountScenesDock, mountSourcesDock } from './ui/scenes-dock';
@@ -21,6 +26,8 @@ import { mountScenesDock, mountSourcesDock } from './ui/scenes-dock';
 const $ = (id: string) => document.getElementById(id)!;
 
 export function startStudio() {
+  // Shared custom dropdowns, switches and tooltips for everything on the page.
+  autoEnhanceControls();
   const settings: OutputSettings = {
     width: 1920,
     height: 1080,
@@ -124,45 +131,22 @@ export function startStudio() {
   mountProps(studio, $('props'));
   mountMixer(studio, $('dock-mixer'));
   mountDevices(studio, $('dock-devices'));
-  mountControls(studio, $('dock-controls'));
+  const controlsApi = mountControls(studio, $('dock-controls'));
+  const dock = mountDocking($('dock-root'));
+  mountMenubar($('menubar'), buildMenus(studio, dock, controlsApi));
+  mountContextMenus(studio, dock, controlsApi);
   placeOverlay();
 
-  // ---------- top bar ----------
-  const status = $('top-status');
+  // ---------- top bar: recording indicator ----------
   const recPill = $('rec-pill');
-  const renderStatus = () => {
-    const sigState = sig.status === 'open' ? 'ok' : sig.status === 'connecting' ? 'warn' : 'bad';
-    const devCount = remote.devices.size;
-    const live = [...remote.devices.values()].filter((d) => d.link.state === 'connected').length;
-    status.innerHTML = '';
-    const item = (dot: string | null, text: string, title = '') => {
-      const s = document.createElement('span');
-      s.title = title;
-      if (dot) {
-        const d = document.createElement('span');
-        d.className = `dot ${dot}`;
-        s.append(d);
-      }
-      s.append(text);
-      status.append(s);
-    };
-    item(
-      sigState,
-      sig.label,
-      sig.mode === 'relay'
-        ? 'Encrypted public relays used only to set up connections; media stays on your network'
-        : 'Local signaling server connection',
-    );
-    item(devCount ? (live === devCount ? 'ok' : 'warn') : null, `${live}/${devCount} devices`);
-    item(null, `${settings.width}×${settings.height}`);
-    item(comp.actualFps >= settings.fps - 2 ? null : 'warn', `${comp.actualFps}/${settings.fps} fps`, 'Render rate');
+  const renderRecPill = () => {
     const st = recorder.state;
     recPill.hidden = st === 'inactive';
     recPill.classList.toggle('paused', st === 'paused');
     recPill.textContent = st === 'paused' ? 'PAUSED' : `● REC ${new Date(recorder.elapsed).toISOString().slice(11, 19)}`;
   };
-  setInterval(renderStatus, 500);
-  sig.on('status', renderStatus);
+  setInterval(renderRecPill, 500);
+  recorder.on('state', renderRecPill);
 
   // ---------- audio unlock ----------
   const banner = $('audio-banner');
@@ -222,10 +206,7 @@ export function startStudio() {
     }
     if (e.key === 'Escape') return store.select(null);
     if (!sel) return;
-    if ((e.key === 'Delete' || e.key === 'Backspace') && !sel.locked) {
-      e.preventDefault();
-      store.removeItem(sel.id);
-    }
+    // Del / Backspace are handled by the Edit menu (deletes the focused scene or source).
     const step = e.shiftKey ? 10 : 1;
     const nudge: Record<string, [number, number]> = {
       ArrowLeft: [-step, 0],

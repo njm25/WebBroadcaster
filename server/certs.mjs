@@ -42,10 +42,10 @@ export function networkAddresses() {
       else if (VIRTUAL_IFACE.test(iface)) kind = 'virtual';
       const label =
         kind === 'vpn'
-          ? `${/tailscale/i.test(iface) || a === 100 ? 'Tailscale' : iface} VPN — only devices on the VPN`
+          ? `${/tailscale/i.test(iface) || a === 100 ? 'Tailscale' : iface} VPN (only devices on the VPN)`
           : kind === 'virtual'
             ? `${iface} (virtual adapter)`
-            : `${iface} — local network`;
+            : `${iface} (local network)`;
       out.push({ ip, iface, kind, label });
     }
   }
