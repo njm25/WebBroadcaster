@@ -32,6 +32,8 @@ interface Settings {
   micId: string;
   quality: QualityPreset;
   processing: boolean;
+  /** Browser automatic gain control: keeps mic level usable (raw phone mics are very quiet). */
+  autoGain: boolean;
   wantCam: boolean;
   wantMic: boolean;
 }
@@ -48,6 +50,7 @@ export function startSourceApp() {
     micId: '',
     quality: '1080p',
     processing: false,
+    autoGain: true,
     wantCam: true,
     wantMic: true,
     ...loadJSON<Partial<Settings>>('wb.source.settings', {}),
@@ -184,7 +187,7 @@ export function startSourceApp() {
     const audio: MediaTrackConstraints = {
       echoCancellation: p,
       noiseSuppression: p,
-      autoGainControl: p,
+      autoGainControl: settings.autoGain || p,
       channelCount: { ideal: 2 },
     };
     if (settings.micId) audio.deviceId = { exact: settings.micId };
@@ -492,6 +495,7 @@ export function startSourceApp() {
     $<HTMLInputElement>('set-name').value = settings.name;
     $<HTMLSelectElement>('set-quality').value = settings.quality;
     $<HTMLInputElement>('set-processing').checked = settings.processing;
+    $<HTMLInputElement>('set-autogain').checked = settings.autoGain;
     refreshDeviceLists();
     sheet.hidden = false;
   });
@@ -522,6 +526,11 @@ export function startSourceApp() {
   });
   $<HTMLInputElement>('set-processing').addEventListener('change', (e) => {
     settings.processing = (e.target as HTMLInputElement).checked;
+    persist();
+    if (pubs.mic.track) guard(startMic)();
+  });
+  $<HTMLInputElement>('set-autogain').addEventListener('change', (e) => {
+    settings.autoGain = (e.target as HTMLInputElement).checked;
     persist();
     if (pubs.mic.track) guard(startMic)();
   });

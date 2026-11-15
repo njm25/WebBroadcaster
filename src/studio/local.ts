@@ -139,7 +139,8 @@ export class LocalSources {
           deviceId: d.deviceId ? { exact: d.deviceId } : undefined,
           echoCancellation: false,
           noiseSuppression: false,
-          autoGainControl: false,
+          // Raw mics are often ~40 dB too quiet; let the browser level them.
+          autoGainControl: true,
         },
         video: false,
       });
