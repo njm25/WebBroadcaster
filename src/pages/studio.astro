@@ -1,0 +1,69 @@
+---
+import Base from '../layouts/Base.astro';
+import '../styles/studio.css';
+---
+
+<Base title="WebBroadcaster · Studio" bodyClass="studio-body">
+  <div class="studio" id="studio">
+    <header class="topbar">
+      <div class="brand"><span class="brand-dot"></span> WebBroadcaster</div>
+      <div class="top-status" id="top-status"></div>
+      <div class="top-right">
+        <label class="switch" title="Studio mode: edit a preview scene, then Transition it to program">
+          <input type="checkbox" id="studio-mode" /> <span>Studio mode</span>
+        </label>
+        <span class="rec-pill" id="rec-pill" hidden></span>
+      </div>
+    </header>
+
+    <div class="audio-banner" id="audio-banner" hidden>
+      Audio is paused by the browser. <button class="btn sm primary" id="audio-resume">Enable audio</button>
+    </div>
+
+    <div class="main">
+      <div class="views" id="views">
+        <div class="view" id="view-preview">
+          <div class="view-label">Preview</div>
+          <div class="view-stage"><div class="canvas-wrap" id="wrap-preview"></div></div>
+        </div>
+        <div class="take-col" id="take-col">
+          <button class="btn primary" id="take">Transition ▸</button>
+        </div>
+        <div class="view" id="view-program">
+          <div class="view-label"><span class="live-dot"></span> Program</div>
+          <div class="view-stage"><div class="canvas-wrap" id="wrap-program"></div></div>
+        </div>
+      </div>
+      <aside class="props" id="props"></aside>
+    </div>
+
+    <div class="docks">
+      <section class="dock dock-scenes">
+        <div class="dock-head">Scenes</div>
+        <div class="dock-body" id="dock-scenes"></div>
+      </section>
+      <section class="dock dock-sources">
+        <div class="dock-head">Sources</div>
+        <div class="dock-body" id="dock-sources"></div>
+      </section>
+      <section class="dock dock-mixer">
+        <div class="dock-head">Audio Mixer</div>
+        <div class="dock-body" id="dock-mixer"></div>
+      </section>
+      <section class="dock dock-devices">
+        <div class="dock-head">Devices</div>
+        <div class="dock-body" id="dock-devices"></div>
+      </section>
+      <section class="dock dock-controls">
+        <div class="dock-head">Controls</div>
+        <div class="dock-body" id="dock-controls"></div>
+      </section>
+    </div>
+  </div>
+  <div id="modal-root"></div>
+
+  <script>
+    import { startStudio } from '../studio/main';
+    startStudio();
+  </script>
+</Base>

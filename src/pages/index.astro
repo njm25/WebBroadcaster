@@ -1,0 +1,96 @@
+---
+import Base from '../layouts/Base.astro';
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+---
+
+<Base title="WebBroadcaster">
+  <main class="landing">
+    <div class="brand"><span class="brand-dot"></span> WebBroadcaster</div>
+    <h1>Live production studio in the browser</h1>
+    <p class="lead">
+      Run the studio on a desktop computer, then connect phones, tablets and other computers on the same network as
+      cameras and microphones.
+    </p>
+    <div class="cards">
+      <a class="card" href={`${base}studio/`} id="card-studio">
+        <strong>Open Studio</strong>
+        <span>Scene composition, audio mixer, device manager and recording. Best in desktop Chrome.</span>
+      </a>
+      <a class="card" href={`${base}source/`} id="card-source">
+        <strong>Join as a source</strong>
+        <span>Use this device's camera and microphone as an input for the studio.</span>
+      </a>
+    </div>
+  </main>
+  <script>
+    if (/iPhone|iPad|Android|Mobile/i.test(navigator.userAgent)) {
+      document.getElementById('card-source')?.classList.add('suggested');
+    } else {
+      document.getElementById('card-studio')?.classList.add('suggested');
+    }
+  </script>
+</Base>
+
+<style>
+  .landing {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 12vh 24px 40px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .brand-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 3px solid var(--live);
+  }
+  h1 {
+    font-size: clamp(26px, 5vw, 40px);
+    margin: 18px 0 10px;
+    line-height: 1.15;
+  }
+  .lead {
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1.55;
+    max-width: 60ch;
+  }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+    margin-top: 28px;
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 18px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    text-decoration: none;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .card:hover {
+    border-color: var(--accent);
+    background: var(--panel-2);
+  }
+  .card.suggested {
+    border-color: var(--accent-2);
+  }
+  .card strong {
+    font-size: 17px;
+  }
+  .card span {
+    color: var(--muted);
+    line-height: 1.5;
+  }
+</style>

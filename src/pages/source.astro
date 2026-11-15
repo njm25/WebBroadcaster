@@ -1,0 +1,100 @@
+---
+import Base from '../layouts/Base.astro';
+import '../styles/source.css';
+---
+
+<Base title="WebBroadcaster · Source" bodyClass="source-body">
+  <main id="app" data-view="join">
+    <!-- Join screen -->
+    <section class="join">
+      <div class="join-card">
+        <div class="brand"><span class="brand-dot"></span> WebBroadcaster</div>
+        <h1>Join a studio as a source</h1>
+        <p class="muted">Share this device's camera and microphone with the production dashboard on your network.</p>
+        <label class="field">
+          <span>Device name</span>
+          <input id="name" type="text" maxlength="40" autocomplete="off" />
+        </label>
+        <div class="join-options">
+          <label class="check"><input id="opt-cam" type="checkbox" checked /> Camera</label>
+          <label class="check"><input id="opt-mic" type="checkbox" checked /> Microphone</label>
+        </div>
+        <button id="join" class="btn primary big">Connect</button>
+        <p id="join-error" class="error" hidden></p>
+        <p class="hint muted" id="secure-hint" hidden>
+          This page isn't in a secure context, so the browser blocks camera access. Open it with
+          <code>https://</code> and accept the certificate warning.
+        </p>
+      </div>
+    </section>
+
+    <!-- Live screen -->
+    <section class="live">
+      <div class="stage" id="stage">
+        <video id="preview" autoplay playsinline muted></video>
+        <div class="no-video" id="no-video">
+          <div>Camera off</div>
+        </div>
+        <div class="tally" id="tally"></div>
+      </div>
+
+      <header class="topbar">
+        <div class="status" id="status"><span class="dot"></span><span id="status-text">Connecting…</span></div>
+        <div class="badges">
+          <span class="badge rec" id="badge-rec" hidden>REC</span>
+          <span class="badge onair" id="badge-live" hidden>LIVE</span>
+          <span class="badge pvw" id="badge-pvw" hidden>PREVIEW</span>
+        </div>
+      </header>
+
+      <div class="meter-wrap" id="meter-wrap"><div class="meter" id="meter"></div></div>
+
+      <nav class="controls">
+        <button class="ctl" id="btn-cam" aria-label="Toggle camera"></button>
+        <button class="ctl" id="btn-flip" aria-label="Switch camera"></button>
+        <button class="ctl" id="btn-mic" aria-label="Toggle microphone"></button>
+        <button class="ctl" id="btn-screen" aria-label="Share screen" hidden></button>
+        <button class="ctl" id="btn-settings" aria-label="Settings"></button>
+        <button class="ctl leave" id="btn-leave" aria-label="Disconnect"></button>
+      </nav>
+
+      <div class="sheet" id="sheet" hidden>
+        <div class="sheet-inner">
+          <div class="sheet-head">
+            <strong>Settings</strong>
+            <button class="btn ghost icon" id="sheet-close" aria-label="Close"></button>
+          </div>
+          <label class="field"><span>Device name</span><input id="set-name" type="text" maxlength="40" /></label>
+          <label class="field"><span>Camera</span><select id="set-camera"></select></label>
+          <label class="field">
+            <span>Quality</span>
+            <select id="set-quality">
+              <option value="720p">720p · 2.5 Mbps</option>
+              <option value="1080p">1080p · 6 Mbps</option>
+              <option value="4k">4K · 16 Mbps</option>
+            </select>
+          </label>
+          <label class="field"><span>Microphone</span><select id="set-mic"></select></label>
+          <label class="check">
+            <input id="set-processing" type="checkbox" /> Voice processing (echo cancel / noise suppression)
+          </label>
+          <p class="muted small">Keep this page in the foreground: phones pause the camera when the browser is in the background.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Ended screen -->
+    <section class="ended">
+      <div class="join-card">
+        <h1 id="ended-title">Disconnected</h1>
+        <p class="muted" id="ended-msg">You left the studio.</p>
+        <button class="btn primary big" id="rejoin">Reconnect</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    import { startSourceApp } from '../source/main';
+    startSourceApp();
+  </script>
+</Base>

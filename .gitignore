@@ -1,0 +1,37 @@
+# Dependencies & build output
+node_modules/
+dist/
+.astro/
+
+# Local HTTPS certificate authority + server certs.
+# ca-key.pem can issue certificates your devices trust: never commit it.
+.certs/
+# Safety net for certificates/keys placed elsewhere (e.g. for HTTPS_KEY/HTTPS_CERT)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / sync-client clutter (Windows, OneDrive, macOS)
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+
+# Personal Claude Code settings (shared launch.json stays tracked)
+.claude/settings.local.json
