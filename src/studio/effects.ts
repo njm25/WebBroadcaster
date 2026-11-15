@@ -71,6 +71,10 @@ uniform vec2 u_maskTexel;
 uniform float u_lo;
 uniform float u_hi;
 uniform float u_shift;
+uniform float u_bgOpacity;
+uniform sampler2D u_blur; // blurred background (premultiplied by blur weight), or unused
+uniform float u_useBlur;
+uniform vec2 u_feather; // feather radius in uv (x, y); 0 = off
 
 void main() {
   vec3 c = texture(u_tex, v_uv).rgb;
@@ -88,9 +92,76 @@ void main() {
       wsum += w;
     }
   }
-  float m = sum / max(wsum, 1e-5) + u_shift;
-  float a = smoothstep(u_lo, u_hi, m);
-  o = vec4(c * a, a); // premultiplied
+  float m = sum / max(wsum, 1e-5);
+  // Feather: average the mask over a disc (Vogel spiral) so the cut-out edge
+  // fades out over a wider band instead of a hard line.
+  if (u_feather.x > 0.0) {
+    float disc = m;
+    for (int i = 0; i < 24; i++) {
+      float r = sqrt((float(i) + 0.5) / 24.0);
+      float th = float(i) * 2.39996323;
+      disc += texture(u_mask, v_uv + vec2(cos(th), sin(th)) * r * u_feather).r;
+    }
+    disc /= 25.0;
+    m = mix(m, disc, 0.85);
+  }
+  m += u_shift;
+  float person = smoothstep(u_lo, u_hi, m);
+  // Background: optionally blurred (blur texture is stored flipped, see blur passes).
+  vec3 bg = c;
+  if (u_useBlur > 0.5) {
+    vec4 b = texture(u_blur, vec2(v_uv.x, 1.0 - v_uv.y));
+    if (b.a > 1e-3) bg = b.rgb / b.a;
+  }
+  vec3 rgb = mix(bg, c, person);
+  // Background stays visible at u_bgOpacity instead of disappearing completely.
+  float a = mix(u_bgOpacity, 1.0, person);
+  o = vec4(rgb * a, a); // premultiplied
+}`;
+
+// Masked separable Gaussian blur of the background. Pixels the model thinks are
+// the person get zero weight, so the person's colors don't bleed into the
+// blurred background (no halo). Pass 1 (horizontal) reads the video + mask and
+// writes weighted color + total weight; pass 2 (vertical) blurs that result.
+const BLUR_H_FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+out vec4 o;
+uniform sampler2D u_tex;
+uniform sampler2D u_mask;
+uniform vec2 u_step;   // offset between taps, in uv
+uniform float u_sigma; // in taps
+void main() {
+  vec4 acc = vec4(0.0);
+  float norm = 0.0;
+  for (int i = -12; i <= 12; i++) {
+    float g = exp(-float(i * i) / (2.0 * u_sigma * u_sigma));
+    vec2 uv = v_uv + float(i) * u_step;
+    float bgw = 1.0 - smoothstep(0.3, 0.7, texture(u_mask, uv).r);
+    float w = g * bgw;
+    acc += vec4(texture(u_tex, uv).rgb * w, w);
+    norm += g;
+  }
+  o = acc / max(norm, 1e-5);
+}`;
+
+const BLUR_V_FRAG = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+out vec4 o;
+uniform sampler2D u_src;
+uniform vec2 u_step;
+uniform float u_sigma;
+void main() {
+  vec2 base = vec2(v_uv.x, 1.0 - v_uv.y); // sample the (flipped) render target
+  vec4 acc = vec4(0.0);
+  float norm = 0.0;
+  for (int i = -12; i <= 12; i++) {
+    float g = exp(-float(i * i) / (2.0 * u_sigma * u_sigma));
+    acc += texture(u_src, base + float(i) * u_step) * g;
+    norm += g;
+  }
+  o = acc / max(norm, 1e-5);
 }`;
 
 type Prog = { prog: WebGLProgram; loc: (name: string) => WebGLUniformLocation | null };
@@ -165,6 +236,8 @@ export class Effects {
   private gl: WebGL2RenderingContext | null;
   private chroma: Prog | null = null;
   private matte: Prog | null = null;
+  private blurH: Prog | null = null;
+  private blurV: Prog | null = null;
   private videoTex: WebGLTexture | null = null;
   private masks = new Map<string, MaskState>();
   private segmenters = new Map<KeySettings['quality'], Segmenter | 'loading' | Error>();
@@ -186,6 +259,8 @@ export class Effects {
     try {
       this.chroma = this.program(CHROMA_FRAG);
       this.matte = this.program(MATTE_FRAG);
+      this.blurH = this.program(BLUR_H_FRAG);
+      this.blurV = this.program(BLUR_V_FRAG);
       const vbo = gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
@@ -257,8 +332,11 @@ export class Effects {
       gl.uniform1f(p.loc('u_spill'), k.spill / 100);
       this.draw(p);
     } else if (k.mode === 'remove' && mask && this.matte) {
+      const useBlur = this.blurBackground(mask, k, w, h);
       const p = this.matte;
       gl.useProgram(p.prog);
+      gl.uniform1i(p.loc('u_blur'), 2);
+      gl.uniform1f(p.loc('u_useBlur'), useBlur ? 1 : 0);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, mask.tex);
       gl.uniform1i(p.loc('u_tex'), 0);
@@ -269,9 +347,86 @@ export class Effects {
       gl.uniform1f(p.loc('u_lo'), t - soft);
       gl.uniform1f(p.loc('u_hi'), t + soft);
       gl.uniform1f(p.loc('u_shift'), k.shift / 100);
+      gl.uniform1f(p.loc('u_bgOpacity'), Math.max(0, Math.min(1, k.bgOpacity / 100)));
+      const featherPx = (k.feather / 100) * 30; // up to ~30 px at full resolution
+      gl.uniform2f(p.loc('u_feather'), featherPx / w, featherPx / h);
       this.draw(p);
     }
     return this.canvas;
+  }
+
+  /**
+   * Blur the background (person excluded) into a half-resolution texture bound
+   * to texture unit 2. Returns false when blur is off or unavailable.
+   * Leaves the default framebuffer bound with the full-size viewport.
+   */
+  private blurBackground(mask: MaskState, k: KeySettings, w: number, h: number): boolean {
+    const gl = this.gl!;
+    if (k.bgBlur <= 0 || k.bgOpacity <= 0 || !this.blurH || !this.blurV) return false;
+    const bw = Math.max(1, Math.round(w / 2));
+    const bh = Math.max(1, Math.round(h / 2));
+    const t = this.ensureTargets(bw, bh);
+
+    // Blur strength: up to ~48 px at full resolution (24 px at half res).
+    const sigmaPx = Math.max(0.5, (k.bgBlur / 100) * 24);
+    const spacing = Math.max(1, sigmaPx / 5); // 25 taps cover about ±2.4 sigma
+    const sigmaTaps = sigmaPx / spacing;
+
+    // Pass 1: horizontal, video + mask → A
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.a.fb);
+    gl.viewport(0, 0, bw, bh);
+    gl.useProgram(this.blurH.prog);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, mask.tex);
+    gl.uniform1i(this.blurH.loc('u_tex'), 0);
+    gl.uniform1i(this.blurH.loc('u_mask'), 1);
+    gl.uniform2f(this.blurH.loc('u_step'), spacing / bw, 0);
+    gl.uniform1f(this.blurH.loc('u_sigma'), sigmaTaps);
+    this.draw(this.blurH);
+
+    // Pass 2: vertical, A → B
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.b.fb);
+    gl.useProgram(this.blurV.prog);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, t.a.tex);
+    gl.uniform1i(this.blurV.loc('u_src'), 2);
+    gl.uniform2f(this.blurV.loc('u_step'), 0, spacing / bh);
+    gl.uniform1f(this.blurV.loc('u_sigma'), sigmaTaps);
+    this.draw(this.blurV);
+
+    // Back to the canvas; leave the blurred result on unit 2 for the final pass.
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, w, h);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, t.b.tex);
+    return true;
+  }
+
+  private targets: { w: number; h: number; a: { fb: WebGLFramebuffer; tex: WebGLTexture }; b: { fb: WebGLFramebuffer; tex: WebGLTexture } } | null =
+    null;
+
+  private ensureTargets(w: number, h: number) {
+    const gl = this.gl!;
+    if (this.targets && this.targets.w === w && this.targets.h === h) return this.targets;
+    if (this.targets) {
+      for (const t of [this.targets.a, this.targets.b]) {
+        gl.deleteFramebuffer(t.fb);
+        gl.deleteTexture(t.tex);
+      }
+    }
+    // Create on a spare texture unit so the video (unit 0) and mask (unit 1) stay bound.
+    gl.activeTexture(gl.TEXTURE3);
+    const make = () => {
+      const tex = this.texture();
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      const fb = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      return { fb, tex };
+    };
+    this.targets = { w, h, a: make(), b: make() };
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return this.targets;
   }
 
   /** Forget per-item state (item deleted). */

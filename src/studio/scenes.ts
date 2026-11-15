@@ -67,9 +67,12 @@ export interface KeySettings {
   // Background removal
   quality: 'fast' | 'accurate';
   threshold: number; // 0–100: how confident the model must be that a pixel is a person
-  softness: number; // 0–100: edge feather
+  softness: number; // 0–100: how hard or gradual the edge transition is
+  feather: number; // 0–100: width of the soft edge band, in pixels (spatial blur of the cut-out edge)
   shift: number; // -50–50: shrink (−) or grow (+) the cut-out
   smoothing: number; // 0–95: steadies the mask between frames (less flicker, slower to follow motion)
+  bgOpacity: number; // 0–100: how much of the original background stays visible (0 = fully removed)
+  bgBlur: number; // 0–100: blur applied to the visible background
 }
 
 export const DEFAULT_KEY: KeySettings = {
@@ -81,8 +84,11 @@ export const DEFAULT_KEY: KeySettings = {
   quality: 'fast',
   threshold: 50,
   softness: 20,
+  feather: 0,
   shift: 0,
   smoothing: 60,
+  bgOpacity: 0,
+  bgBlur: 0,
 };
 
 export const keyOf = (item: SceneItem): KeySettings => ({ ...DEFAULT_KEY, ...item.key });

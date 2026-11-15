@@ -7,7 +7,7 @@
 import { assets } from '../lib/util';
 import { Effects } from './effects';
 import { videoFrameOf, type InputRegistry } from './inputs';
-import { SCENE_H, SCENE_W, type Scene, type SceneItem, type SceneStore, type TextStyle, type TransitionType } from './scenes';
+import { SCENE_H, SCENE_W, keyOf, type Scene, type SceneItem, type SceneStore, type TextStyle, type TransitionType } from './scenes';
 
 interface Drawable {
   img: CanvasImageSource;
@@ -253,17 +253,63 @@ export class Compositor {
             sh = nsh;
           }
         }
+        // Keyed sources draw through the effects pass (same pixel size, transparent where keyed).
+        const img = d.img instanceof HTMLVideoElement ? (this.effects.apply(item, d.img) ?? d.img) : d.img;
+        // Background blur on a cut-out: blur whatever is already drawn behind
+        // this source (other layers) inside its area, then draw the person on top.
+        if (img !== d.img) this.backdropBlur(ctx, item, dx, dy, dw, dh);
         if (item.flipH) {
           ctx.translate(dx * 2 + dw, 0);
           ctx.scale(-1, 1);
         }
-        // Keyed sources draw through the effects pass (same pixel size, transparent where keyed).
-        const img = d.img instanceof HTMLVideoElement ? (this.effects.apply(item, d.img) ?? d.img) : d.img;
         ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
       }
     }
     ctx.restore();
   }
+
+  /**
+   * "Frosted glass" behind a background-removed source: re-draws the layers
+   * already on the canvas inside the source's area through a blur filter.
+   * Coordinates are in scene units (the context is scaled to the canvas).
+   */
+  private backdropBlur(ctx: CanvasRenderingContext2D, item: SceneItem, x: number, y: number, w: number, h: number) {
+    const k = keyOf(item);
+    if (k.mode !== 'remove' || k.bgBlur <= 0) return;
+    const m = ctx.getTransform();
+    const scale = Math.hypot(m.a, m.b) || 1;
+    const radius = (k.bgBlur / 100) * 40 * scale; // up to ~40 scene px
+    // Canvas-pixel rectangle to re-draw, padded so the blur has pixels to sample.
+    const pad = Math.ceil(radius * 2);
+    const cw = ctx.canvas.width;
+    const ch = ctx.canvas.height;
+    const px = Math.max(0, Math.floor(m.e + x * m.a) - pad);
+    const py = Math.max(0, Math.floor(m.f + y * m.d) - pad);
+    const pw = Math.min(cw, Math.ceil(m.e + (x + w) * m.a) + pad) - px;
+    const ph = Math.min(ch, Math.ceil(m.f + (y + h) * m.d) + pad) - py;
+    if (pw <= 0 || ph <= 0) return;
+
+    // Copy the region first: a canvas can't reliably read itself while drawing.
+    const tmp = (this.blurScratch ??= document.createElement('canvas'));
+    if (tmp.width < pw || tmp.height < ph) {
+      tmp.width = Math.max(tmp.width, pw);
+      tmp.height = Math.max(tmp.height, ph);
+    }
+    const tctx = tmp.getContext('2d')!;
+    tctx.clearRect(0, 0, pw, ph);
+    tctx.drawImage(ctx.canvas, px, py, pw, ph, 0, 0, pw, ph);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h); // clip to the source's area (in scene units)
+    ctx.clip();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.filter = `blur(${radius.toFixed(1)}px)`;
+    ctx.drawImage(tmp, 0, 0, pw, ph, px, py, pw, ph);
+    ctx.restore();
+  }
+
+  private blurScratch: HTMLCanvasElement | null = null;
 
   /** Native pixel size of an item's source, if known. */
   naturalSize(item: SceneItem): { w: number; h: number } | null {

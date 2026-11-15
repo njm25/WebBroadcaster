@@ -105,11 +105,12 @@ export function mountProps(studio: Studio, root: HTMLElement) {
     max: number,
     tip: string,
     fmt: (v: number) => string = (v) => String(v),
+    patchFor: (v: number) => Partial<KeySettings> = (v) => ({ [field]: v }) as Partial<KeySettings>,
   ) => {
     const input = bind(
       h('input', { type: 'range', min: String(min), max: String(max), step: '1' }) as HTMLInputElement,
       (i) => keyOf(i)[field] as number,
-      (v) => setKey({ [field]: Number(v) } as Partial<KeySettings>),
+      (v) => setKey(patchFor(Number(v))),
     );
     const out = h('span.slider-val');
     fields.push({ el: out, read: (i) => keyOf(i)[field] as number, apply: (v) => (out.textContent = fmt(Number(v))) });
@@ -168,9 +169,12 @@ export function mountProps(studio: Studio, root: HTMLElement) {
       rows.push(
         h('div.prop-row', null, h('span', null, 'Quality'), qualityCtl.el),
         keySlider('Threshold', 'threshold', 1, 99, 'How sure the model must be that a pixel belongs to a person. Raise it to remove more background.', pct),
-        keySlider('Softness', 'softness', 0, 100, 'Feathers the edge of the cut-out.', pct),
+        keySlider('Softness', 'softness', 0, 100, 'How hard or gradual the edge of the cut-out is.', pct),
+        keySlider('Feather', 'feather', 0, 100, 'Widens the soft edge around the cut-out so it fades into what is behind.', pct),
         keySlider('Edge shift', 'shift', -50, 50, 'Shrinks (−) or grows (+) the cut-out around the person.', (v) => (v > 0 ? `+${v}` : String(v))),
         keySlider('Smoothing', 'smoothing', 0, 95, 'Steadies the cut-out between frames. Higher = less flicker but slower to follow fast motion.', pct),
+        keySlider('BG opacity', 'bgOpacity', 0, 100, 'How much of the original background stays visible. 0% removes it completely.', pct),
+        keySlider('BG blur', 'bgBlur', 0, 100, 'Blurs everything behind you: other sources underneath, and the camera’s own background when BG opacity is above 0%.', pct),
       );
       const status = comp.effects.status(k.quality);
       if (status) rows.push(h('p.key-note', null, status));
