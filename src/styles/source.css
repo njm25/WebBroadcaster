@@ -135,11 +135,15 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  /* Grey by default; red only when recording + in the live scene + visible */
+  /* Grey by default · green when live (or in Preview while recording) · red when live + recording */
   border: 5px solid rgb(139 147 163 / 0.55);
   transition:
     border-color 0.25s ease,
     box-shadow 0.25s ease;
+}
+.tally.live {
+  border-color: var(--ok);
+  box-shadow: inset 0 0 24px rgb(48 164 108 / 0.35);
 }
 .tally.rec {
   border-color: var(--live);

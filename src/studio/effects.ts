@@ -172,7 +172,7 @@ interface MaskState {
   bytes: Uint8Array | null;
   w: number;
   h: number;
-  lastRun: number;
+  seq: number; // which shared raw mask was last blended in
   quality: KeySettings['quality'];
 }
 
@@ -183,14 +183,31 @@ const MODEL_FILES: Record<KeySettings['quality'], string> = {
   accurate: 'selfie_multiclass_256x256.tflite',
 };
 
-type MaskSink = (data: Float32Array, w: number, h: number) => void;
+/**
+ * Frames are shrunk to about the model's own input width before analysis.
+ * MediaPipe returns the mask at the size of the image it was given, so a full
+ * 1280×720 frame would mean ~1M mask values to smooth and upload every time.
+ * The matte shader upsamples edge-aware, so nothing is lost.
+ */
+const SEG_WIDTH = 256;
+function segSize(video: HTMLVideoElement) {
+  const w = Math.min(SEG_WIDTH, video.videoWidth);
+  return { w, h: Math.max(1, Math.round((w * video.videoHeight) / video.videoWidth)) };
+}
 
+/** Latest person-probability mask for one camera (shared by every source showing it). */
+type RawMask = { data: Float32Array; w: number; h: number; seq: number };
+
+/**
+ * Main-thread segmenter: only used if the background worker can't start.
+ * `sink` gets data that is valid during the call only.
+ */
 class Segmenter {
   private ts = 0;
   private constructor(
     private seg: import('@mediapipe/tasks-vision').ImageSegmenter,
     private maskIndex: number,
-    private invert: boolean,
+    readonly invert: boolean,
   ) {}
 
   static async create(quality: KeySettings['quality']) {
@@ -210,22 +227,124 @@ class Segmenter {
     return bg >= 0 ? new Segmenter(seg, bg, true) : new Segmenter(seg, 0, false);
   }
 
-  /** Run on the current video frame; `sink` receives person probability (0–1). */
-  run(video: HTMLVideoElement, sink: MaskSink) {
-    // VIDEO mode needs strictly increasing timestamps across all calls.
+  private small = document.createElement('canvas');
+
+  run(video: HTMLVideoElement, sink: (data: Float32Array, w: number, h: number) => void) {
+    const { w, h } = segSize(video);
+    if (this.small.width !== w || this.small.height !== h) {
+      this.small.width = w;
+      this.small.height = h;
+    }
+    this.small.getContext('2d')!.drawImage(video, 0, 0, w, h);
     this.ts = Math.max(this.ts + 1, Math.floor(performance.now()));
-    this.seg.segmentForVideo(video, this.ts, (res) => {
+    this.seg.segmentForVideo(this.small, this.ts, (res) => {
       const mask = res.confidenceMasks?.[this.maskIndex];
-      if (!mask) return;
-      const data = mask.getAsFloat32Array();
-      if (this.invert) {
-        const out = new Float32Array(data.length);
-        for (let i = 0; i < data.length; i++) out[i] = 1 - data[i];
-        sink(out, mask.width, mask.height);
-      } else {
-        sink(data, mask.width, mask.height);
-      }
+      if (mask) sink(mask.getAsFloat32Array(), mask.width, mask.height);
     });
+  }
+}
+
+/**
+ * Person segmentation for one model quality. Runs the model on a background
+ * thread (Web Worker) so the studio's main thread only posts frames and
+ * receives masks. One analysis per camera, shared by every source showing it
+ * (e.g. the same camera in Preview and Program). Falls back to the main
+ * thread at a lower rate if workers can't run the model.
+ */
+class SegmentationService {
+  status: 'loading' | 'ready' | Error = 'loading';
+  private worker: Worker | null = null;
+  private fallback: Segmenter | null = null;
+  private latest = new Map<string, RawMask>();
+  private inflight = new Set<string>();
+  private lastRequest = new Map<string, number>();
+  private seq = 0;
+
+  constructor(
+    private quality: KeySettings['quality'],
+    private onStatus: () => void,
+  ) {
+    const abs = (p: string) => new URL(`${basePath()}vendor/mediapipe/${p}`, location.href).href;
+    try {
+      const w = new Worker(new URL('./seg-worker.ts', import.meta.url), { type: 'module' });
+      this.worker = w;
+      w.onmessage = (e) => this.onWorker(e.data);
+      w.onerror = () => this.useFallback(new Error('background worker failed to start'));
+      w.postMessage({ type: 'init', wasmPath: abs('wasm'), modelPath: abs(MODEL_FILES[quality]) });
+    } catch (e) {
+      this.useFallback(e);
+    }
+  }
+
+  /** Ask for a fresh mask for this camera (rate-limited; no-op while one is in progress). */
+  request(key: string, video: HTMLVideoElement) {
+    if (this.status !== 'ready' || !video.videoWidth) return;
+    const now = performance.now();
+    const minInterval = this.worker ? 33 : 66; // ~30/s off-thread, ~15/s on the main thread
+    if (this.inflight.has(key) || now - (this.lastRequest.get(key) ?? 0) < minInterval) return;
+    this.lastRequest.set(key, now);
+
+    if (this.worker) {
+      const worker = this.worker;
+      this.inflight.add(key);
+      const { w, h } = segSize(video);
+      createImageBitmap(video, { resizeWidth: w, resizeHeight: h, resizeQuality: 'medium' })
+        .then((bitmap) => worker.postMessage({ type: 'frame', key, bitmap }, [bitmap]))
+        .catch(() => this.inflight.delete(key));
+    } else if (this.fallback) {
+      const fb = this.fallback;
+      fb.run(video, (data, w, h) => this.store(key, data, w, h, fb.invert, true));
+    }
+  }
+
+  latestFor(key: string) {
+    return this.latest.get(key);
+  }
+
+  private onWorker(msg: { type: string; key?: string; w?: number; h?: number; data?: Float32Array | null; message?: string }) {
+    if (msg.type === 'ready') {
+      this.status = 'ready';
+      this.onStatus();
+    } else if (msg.type === 'error') {
+      this.useFallback(new Error(msg.message));
+    } else if (msg.type === 'mask' && msg.key) {
+      this.inflight.delete(msg.key);
+      if (msg.data && msg.w && msg.h) this.store(msg.key, msg.data, msg.w, msg.h, false, false);
+    }
+  }
+
+  /** Keep the newest mask per camera. `copy` when the data is only valid during the call. */
+  private store(key: string, data: Float32Array, w: number, h: number, invert: boolean, copy: boolean) {
+    let entry = this.latest.get(key);
+    if (copy || invert) {
+      if (!entry || entry.data.length !== data.length) entry = { data: new Float32Array(data.length), w, h, seq: 0 };
+      if (invert) for (let i = 0; i < data.length; i++) entry.data[i] = 1 - data[i];
+      else entry.data.set(data);
+    } else {
+      entry = { data, w, h, seq: 0 }; // transferred from the worker: ours to keep
+    }
+    entry.w = w;
+    entry.h = h;
+    entry.seq = ++this.seq;
+    this.latest.set(key, entry);
+  }
+
+  private useFallback(reason: unknown) {
+    if (this.fallback || this.status instanceof Error) return;
+    console.warn('[effects] background segmentation unavailable, using main thread', reason);
+    this.worker?.terminate();
+    this.worker = null;
+    this.status = 'loading';
+    this.onStatus();
+    Segmenter.create(this.quality)
+      .then((seg) => {
+        this.fallback = seg;
+        this.status = 'ready';
+      })
+      .catch((e: unknown) => {
+        this.status = e instanceof Error ? e : new Error(String(e));
+      })
+      .finally(() => this.onStatus());
   }
 }
 
@@ -240,7 +359,7 @@ export class Effects {
   private blurV: Prog | null = null;
   private videoTex: WebGLTexture | null = null;
   private masks = new Map<string, MaskState>();
-  private segmenters = new Map<KeySettings['quality'], Segmenter | 'loading' | Error>();
+  private services = new Map<KeySettings['quality'], SegmentationService>();
   /** Per-quality status for the UI ("Loading model…", errors). */
   private listeners = new Set<() => void>();
 
@@ -284,7 +403,7 @@ export class Effects {
   /** Human-readable state of background removal for the given quality. */
   status(quality: KeySettings['quality']): string | null {
     if (!this.gl) return 'Keying needs WebGL2, which this browser does not have.';
-    const s = this.segmenters.get(quality);
+    const s = this.services.get(quality)?.status;
     if (s === 'loading') return 'Loading the background removal model…';
     if (s instanceof Error) return `Background removal failed to load: ${s.message}`;
     return null;
@@ -302,7 +421,9 @@ export class Effects {
 
     let mask: MaskState | null = null;
     if (k.mode === 'remove') {
-      mask = this.updateMask(item.id, video, k);
+      // One analysis per camera, shared by every source showing it.
+      const cam = item.source.type === 'input' ? item.source.inputId : item.id;
+      mask = this.updateMask(item.id, cam, video, k);
       if (!mask?.buf) return null; // model still loading: show the plain video meanwhile
     }
 
@@ -438,61 +559,56 @@ export class Effects {
 
   // ---------------------------------------------------------------- internals
 
-  private updateMask(itemId: string, video: HTMLVideoElement, k: KeySettings): MaskState | null {
+  private updateMask(itemId: string, cam: string, video: HTMLVideoElement, k: KeySettings): MaskState | null {
     const gl = this.gl!;
-    const seg = this.segmenterFor(k.quality);
+    const svc = this.serviceFor(k.quality);
     let st = this.masks.get(itemId);
     if (!st) {
-      st = { tex: this.texture(), buf: null, bytes: null, w: 1, h: 1, lastRun: 0, quality: k.quality };
+      st = { tex: this.texture(), buf: null, bytes: null, w: 1, h: 1, seq: 0, quality: k.quality };
       this.masks.set(itemId, st);
     }
     if (st.quality !== k.quality) {
       st.quality = k.quality;
       st.buf = null; // different model resolution: start fresh
+      st.seq = 0;
     }
-    if (!seg) return st;
 
-    // Segment at most ~30 times a second per source.
-    const now = performance.now();
-    if (now - st.lastRun < 30) return st;
-    st.lastRun = now;
+    svc.request(cam, video); // rate-limited and de-duplicated per camera
+    const raw = svc.latestFor(cam);
+    if (!raw || raw.seq === st.seq) return st; // nothing new: reuse the uploaded mask
+    st.seq = raw.seq;
 
-    const s = st;
-    seg.run(video, (data, w, h) => {
-      if (!s.buf || s.w !== w || s.h !== h) {
-        s.buf = new Float32Array(data);
-        s.bytes = new Uint8Array(w * h);
-        s.w = w;
-        s.h = h;
-      } else {
-        // Exponential moving average: higher smoothing = steadier mask.
-        const a = 1 - Math.min(0.95, Math.max(0, k.smoothing / 100));
-        for (let i = 0; i < data.length; i++) s.buf[i] += (data[i] - s.buf[i]) * a;
-      }
-      const bytes = s.bytes!;
-      for (let i = 0; i < s.buf.length; i++) bytes[i] = Math.max(0, Math.min(255, s.buf[i] * 255));
-      gl.bindTexture(gl.TEXTURE_2D, s.tex);
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, bytes);
-    });
+    const { data, w, h } = raw;
+    if (!st.buf || st.w !== w || st.h !== h) {
+      st.buf = new Float32Array(data);
+      st.bytes = new Uint8Array(w * h);
+      st.w = w;
+      st.h = h;
+    } else {
+      // Exponential moving average: higher smoothing = steadier mask.
+      const a = 1 - Math.min(0.95, Math.max(0, k.smoothing / 100));
+      const buf = st.buf;
+      for (let i = 0; i < buf.length; i++) buf[i] += (data[i] - buf[i]) * a;
+    }
+    const buf = st.buf;
+    const bytes = st.bytes!;
+    for (let i = 0; i < buf.length; i++) bytes[i] = buf[i] <= 0 ? 0 : buf[i] >= 1 ? 255 : buf[i] * 255;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, st.tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, bytes);
+    gl.activeTexture(gl.TEXTURE0);
     return st;
   }
 
-  private segmenterFor(quality: KeySettings['quality']): Segmenter | null {
-    const s = this.segmenters.get(quality);
-    if (s instanceof Segmenter) return s;
-    if (s === undefined) {
-      this.segmenters.set(quality, 'loading');
+  private serviceFor(quality: KeySettings['quality']): SegmentationService {
+    let svc = this.services.get(quality);
+    if (!svc) {
+      svc = new SegmentationService(quality, () => this.emit());
+      this.services.set(quality, svc);
       this.emit();
-      Segmenter.create(quality)
-        .then((seg) => this.segmenters.set(quality, seg))
-        .catch((e: unknown) => {
-          console.warn('[effects] segmenter failed', e);
-          this.segmenters.set(quality, e instanceof Error ? e : new Error(String(e)));
-        })
-        .finally(() => this.emit());
     }
-    return null;
+    return svc;
   }
 
   private emit() {

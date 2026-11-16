@@ -13,5 +13,7 @@ export default defineConfig({
   integrations: [webBroadcaster()],
   vite: {
     server: tls ? { https: { key: tls.key, cert: tls.cert } } : {},
+    // Background-removal worker is an ES module (MediaPipe loads its runtime with import()).
+    worker: { format: 'es' },
   },
 });

@@ -79,7 +79,8 @@ export function startSourceApp() {
   };
   const links = new Map<string, StudioLink>();
   /** Per studio: is this device on air there (recording + live scene + visible)? */
-  const tallyFrom = new Map<string, boolean>();
+  /** Per studio: 'off' (grey), 'live' (green: in the live scene, visible) or 'rec' (red: live + recording). */
+  const tallyFrom = new Map<string, 'off' | 'live' | 'rec'>();
   let sig: SignalingLike | null = null;
   let wakeLock: { release(): Promise<void> } | null = null;
   let audioCtx: AudioContext | null = null;
@@ -324,10 +325,15 @@ export function startSourceApp() {
     } else if (msg.kind === 'control') {
       void handleControl(msg);
     } else if (msg.kind === 'tally') {
-      // Red only when all three hold: the studio is recording, this device's
-      // video is in the live (program) scene, and that source is visible there.
-      // (The studio only lists sources that are visible in the program scene.)
-      tallyFrom.set(from, msg.recording && msg.program.some((k) => k === 'camera' || k === 'screen'));
+      // The studio only lists sources that are visible in each scene.
+      //   Red:   in the live (program) scene + recording
+      //   Green: in the live scene (not recording), or in Preview while recording
+      //   Grey:  otherwise
+      const isVideo = (k: string) => k === 'camera' || k === 'screen';
+      const inProgram = msg.program.some(isVideo);
+      const inPreview = msg.preview.some(isVideo);
+      const state = inProgram ? (msg.recording ? 'rec' : 'live') : inPreview && msg.recording ? 'live' : 'off';
+      tallyFrom.set(from, state);
       renderTally();
     }
   }
@@ -450,9 +456,13 @@ export function startSourceApp() {
 
   // ---------- tally ----------
   function renderTally() {
-    const onAir = [...tallyFrom.values()].some(Boolean);
-    $('tally').classList.toggle('rec', onAir);
-    $('badge-rec').hidden = !onAir;
+    // Strongest state across connected studios wins: rec > live > off.
+    const states = [...tallyFrom.values()];
+    const state = states.includes('rec') ? 'rec' : states.includes('live') ? 'live' : 'off';
+    const t = $('tally');
+    t.classList.toggle('rec', state === 'rec');
+    t.classList.toggle('live', state === 'live');
+    $('badge-rec').hidden = state !== 'rec';
   }
 
   function renderControls() {
